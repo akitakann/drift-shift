@@ -88,10 +88,17 @@ void testAccelerationAndReturn() {
           "forward acceleration lifts the nose with a bounded visual pitch");
     check(near(accelerating.pitch, -braking.pitch, 0.00002f) && accelerating.roll == 0,
           "equal braking pitches down without creating roll");
+    // Easing off swings the nose once past level, like a sprung body, then settles.
     const float pitchBefore = accelerating.pitch;
-    for (int frame = 0; frame < 15; ++frame) accelerating.update(kDt, fast, settings);
-    check(near(accelerating.pitch, pitchBefore * 0.1f, 0.00002f),
-          "constant speed removes90percent of pitch over the configured250ms recovery");
+    float lowest = pitchBefore;
+    for (int frame = 0; frame < 72; ++frame) {
+        accelerating.update(kDt, fast, settings);
+        lowest = std::fmin(lowest, accelerating.pitch);
+    }
+    check(lowest < -0.10f * pitchBefore && lowest > -0.35f * pitchBefore,
+          "constant speed lets the nose swing once past level by a visible but bounded amount");
+    check(std::fabs(accelerating.pitch) < 0.03f * pitchBefore,
+          "the pitch swing has settled within about1.2 seconds");
 
     const Car frozenCar = fast;
     for (int frame = 0; frame < 180; ++frame) accelerating.update(kDt, frozenCar, settings);
@@ -221,9 +228,9 @@ void testPausedSpeedEditRebase() {
     check(view.roll == beforeRoll && view.pitch == beforePitch,
           "rebasing an edited paused velocity preserves the currently visible body pose");
     view.update(kDt, car, settings);
-    const float naturalReturn = std::exp(-2.302585093f * kDt / settings.bodyRecoveryTime);
-    check(near(view.roll, beforeRoll * naturalReturn, 0.000001f) &&
-          near(view.pitch, beforePitch * naturalReturn, 0.000001f),
+    // Both axes start at rest and relax by the same spring factor: no new load.
+    const float rollReturn = view.roll / beforeRoll, pitchReturn = view.pitch / beforePitch;
+    check(rollReturn > 0.9f && rollReturn < 1 && near(rollReturn, pitchReturn, 0.00001f),
           "resuming after a paused speed edit only relaxes the old pose and creates no false roll or pitch load");
 
     const float validRoll = view.roll;
@@ -687,6 +694,119 @@ std::array<float, 28> physicalSnapshot(const Car& car) {
             float(car.grounded), car.verticalSpeed, car.groundHeight, car.airTime, car.terrainPitch,
             car.terrainRoll, car.landingImpact, float(car.landingSerial)};
 }
+Car sliding(float slip, float direction, bool holding) {
+    Car car = moving(30);
+    car.yaw = wrapPi(car.travelYaw + slip);
+    car.slipAngle = slip;
+    car.drifting = true;
+    car.driftHeld = car.driftHoldActive = holding;
+    car.driftDirection = direction;
+    return car;
+}
+
+void testSpringWeightShift() {
+    FeelSettings settings;
+    const float limit = radians(settings.bodyRollMax);
+
+    // A corner that suddenly straightens: the body swings back past level once.
+    VehiclePresentation view;
+    Car car = moving(24);
+    view.update(kDt, car, settings);
+    for (int frame = 1; frame <= 90; ++frame) {
+        car.travelYaw = car.yaw = wrapPi(0.4f * float(frame) * kDt);
+        view.update(kDt, car, settings);
+    }
+    const float cornerRoll = view.roll;
+    float lowest = cornerRoll, later = 0;
+    for (int frame = 0; frame < 180; ++frame) {
+        view.update(kDt, car, settings);
+        lowest = std::fmin(lowest, view.roll);
+        // After the first return swing (about half a second), any further sway
+        // must be too small to read as another rock of the body.
+        if (frame * kDt > 0.5f) later = std::fmax(later, std::fabs(view.roll));
+    }
+    check(cornerRoll > radians(2) && lowest < -0.10f * cornerRoll && lowest > -0.35f * cornerRoll,
+          "leaving a corner swings the body once past level by a visible, bounded amount");
+    check(later < 0.06f * cornerRoll && view.roll == 0 && view.pitch == 0,
+          "the swing dies out after one visible return and the body comes exactly to rest");
+
+    // Entering a slide throws the weight outward once, mirrored left and right.
+    for (float direction : {1.0f, -1.0f}) {
+        VehiclePresentation entry;
+        Car slide = sliding(0, direction, false);
+        entry.update(kDt, slide, settings);
+        slide.driftPhase = DriftPhase::Entry;
+        float peak = 0;
+        for (int frame = 0; frame < 30; ++frame) {
+            entry.update(kDt, slide, settings);
+            peak = direction > 0 ? std::fmax(peak, entry.roll) : std::fmin(peak, entry.roll);
+        }
+        check(std::fabs(peak) > 0.30f * limit && std::fabs(peak) < 0.36f * limit && peak * direction > 0,
+              "a fresh drift entry leans the body outward by about a third of its limit, once");
+        for (int frame = 0; frame < 120; ++frame) entry.update(kDt, slide, settings);
+        check(std::fabs(entry.roll) < 0.01f * limit, "holding the entry phase does not keep kicking the body");
+    }
+    VehiclePresentation primed;
+    Car already = sliding(0, 1, false);
+    already.driftPhase = DriftPhase::Entry;
+    primed.update(kDt, already, settings);
+    primed.update(kDt, already, settings);
+    check(primed.roll == 0, "a slide already in progress when first observed is not treated as a fresh entry");
+    settings.bodyFlickScale = 0;
+    VehiclePresentation still;
+    Car quiet = sliding(0, 1, false);
+    still.update(kDt, quiet, settings);
+    quiet.driftPhase = DriftPhase::Entry;
+    for (int frame = 0; frame < 30; ++frame) still.update(kDt, quiet, settings);
+    check(still.roll == 0, "a zero flick scale removes the entry kick entirely");
+    settings = FeelSettings{};
+
+    // A held slide leans outward by its scrub even on a straight line.
+    for (float slip : {radians(50), -radians(50)}) {
+        VehiclePresentation scrub;
+        Car held = sliding(slip, slip > 0 ? 1.0f : -1.0f, true);
+        scrub.update(kDt, held, settings);
+        for (int frame = 0; frame < 180; ++frame) scrub.update(kDt, held, settings);
+        check(scrub.roll * slip > 0 && std::fabs(scrub.roll) > 0.20f * limit && std::fabs(scrub.roll) < 0.30f * limit,
+              "a held slide leans mildly outward from tyre scrub, mirrored by slide direction");
+    }
+
+    // Releasing the slide throws the weight back across, more than the spring alone.
+    auto releaseSwing = [&](float flick) {
+        FeelSettings tuned;
+        tuned.bodyFlickScale = flick;
+        VehiclePresentation release;
+        Car held = sliding(radians(50), 1, true);
+        release.update(kDt, held, tuned);
+        for (int frame = 0; frame < 180; ++frame) release.update(kDt, held, tuned);
+        const float before = release.roll;
+        Car freed = held;
+        freed.driftHeld = freed.driftHoldActive = false;
+        freed.releaseEaseActive = true;
+        float low = before;
+        for (int frame = 0; frame < 90; ++frame) {
+            release.update(kDt, freed, tuned);
+            low = std::fmin(low, release.roll);
+            check(std::fabs(release.roll) <= radians(tuned.bodyRollMax) + 0.000001f,
+                  "the release swing never passes the roll limit");
+        }
+        return low / before;
+    };
+    const float withFlick = releaseSwing(1), withoutFlick = releaseSwing(0);
+    check(withoutFlick < 0 && withFlick < withoutFlick * 1.5f && withFlick > withoutFlick * 2.5f && withFlick > -1,
+          "releasing a drift swings the body back across level, the flick roughly doubling the spring's own swing");
+
+    // Even a violent load step cannot carry the body past its stop.
+    VehiclePresentation hard;
+    Car brutal = moving(80);
+    hard.update(kDt, brutal, settings);
+    for (int frame = 1; frame <= 120; ++frame) {
+        brutal.travelYaw = brutal.yaw = wrapPi(frame < 20 ? 2.5f * float(frame) * kDt : 2.5f * 20 * kDt);
+        hard.update(kDt, brutal, settings);
+        check(std::fabs(hard.roll) <= limit + 0.000001f, "spring overshoot is held by the configured roll limit");
+    }
+}
+
 void testPhysicalIndependence() {
     Track track;
     track.makePracticeArea();
@@ -716,6 +836,7 @@ int main() {
     testPauseResetAndLiveLimits();
     testStopAndMalformedSamples();
     testPausedSpeedEditRebase();
+    testSpringWeightShift();
     testBoostHeaveEvents();
     testZeroBoostStrengthAndBrakePriority();
     testBrakeHeaveEvents();

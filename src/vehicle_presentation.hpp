@@ -15,9 +15,11 @@ struct VehiclePresentation {
 
     void reset() {
         roll = pitch = 0;
+        rollVelocity_ = pitchVelocity_ = 0;
+        wasEntry_ = wasHolding_ = false;
         previousVelocity_ = {};
-        previousYaw_ = 0;
-        previousSpeed_ = 0;
+        previousYaw_ = previousTravelYaw_ = 0;
+        previousSpeed_ = previousBoostBonus_ = 0;
         observedBoostSerial_ = 0;
         observedLandingSerial_ = 0;
         brakeHeld_ = false;
@@ -34,14 +36,16 @@ struct VehiclePresentation {
     void rebaseVelocity(const Car& car) {
         if (!std::isfinite(car.speed) || !std::isfinite(car.travelYaw) || !std::isfinite(car.yaw)) {
             previousVelocity_ = {};
-            previousYaw_ = 0;
+            previousYaw_ = previousTravelYaw_ = 0;
             ready_ = false;
             return;
         }
         previousVelocity_ = {std::sin(car.travelYaw) * car.speed, 0,
                              std::cos(car.travelYaw) * car.speed};
         previousYaw_ = float(std::remainder(double(car.yaw), 6.28318530717958647692));
+        previousTravelYaw_ = float(std::remainder(double(car.travelYaw), 6.28318530717958647692));
         previousSpeed_ = car.speed;
+        previousBoostBonus_ = boostBonus(car);
         observedBoostSerial_ = car.boostSerial;
         observedLandingSerial_ = car.landingSerial;
         ready_ = true;
@@ -55,8 +59,8 @@ struct VehiclePresentation {
         constexpr float radians = 3.14159265358979323846f / 180.0f;
         const float maxRoll = settings.bodyRollMax * radians;
         const float maxPitch = settings.bodyPitchMax * radians;
-        roll = boundedAngle(roll, maxRoll);
-        pitch = boundedAngle(pitch, maxPitch);
+        bindLean(roll, rollVelocity_, maxRoll);
+        bindLean(pitch, pitchVelocity_, maxPitch);
         boundBounce(settings);
         boundLanding(settings);
         // Turning off the layer also discards an event pending during pause.
@@ -72,14 +76,19 @@ struct VehiclePresentation {
         const Vec3 velocity{std::sin(car.travelYaw) * car.speed, 0,
                             std::cos(car.travelYaw) * car.speed};
         const float bodyYaw = float(std::remainder(double(car.yaw), 6.28318530717958647692));
+        const float travelYaw = float(std::remainder(double(car.travelYaw), 6.28318530717958647692));
         const bool braking = std::isfinite(brake) && brake > 0.05f;
         if (!ready_) {
             previousVelocity_ = velocity;
             previousYaw_ = bodyYaw;
+            previousTravelYaw_ = travelYaw;
             previousSpeed_ = car.speed;
+            previousBoostBonus_ = boostBonus(car);
             observedBoostSerial_ = car.boostSerial;
             observedLandingSerial_ = car.landingSerial;
             brakeHeld_ = braking;
+            wasEntry_ = car.driftPhase == DriftPhase::Entry;
+            wasHolding_ = car.driftHoldActive;
             ready_ = true;
             return;
         }
@@ -90,13 +99,27 @@ struct VehiclePresentation {
         const float midYaw = previousYaw_ + 0.5f * wrapPi(bodyYaw - previousYaw_);
         const double ax = (double(velocity.x) - double(previousVelocity_.x)) / double(dt);
         const double az = (double(velocity.z) - double(previousVelocity_.z)) / double(dt);
-        const double rightAcceleration = ax * std::cos(midYaw) - az * std::sin(midYaw);
         const double forwardAcceleration = ax * std::sin(midYaw) + az * std::cos(midYaw);
         const float previousAbsSpeed = std::fabs(previousSpeed_);
         const double speedAcceleration = (double(std::fabs(car.speed)) - previousAbsSpeed) / double(dt);
+        // Sideways load comes only from the path turning, seen along the body's
+        // own right axis. A boost's thrust along a slipped path is not a
+        // cornering force and must not throw the body over on release.
+        const float pathTurn = wrapPi(travelYaw - previousTravelYaw_);
+        const float midTravel = previousTravelYaw_ + 0.5f * pathTurn;
+        const double cornerAcceleration = 0.5 * (double(car.speed) + double(previousSpeed_)) *
+            (double(pathTurn) / double(dt)) * std::cos(double(wrapPi(midYaw - midTravel)));
+        // Fore-aft load follows the driven speed and a boost's rise, but not the
+        // boost fading away, which would read as an unasked-for brake dive.
+        const float bonus = boostBonus(car);
+        const double driveAcceleration =
+            ((double(std::fabs(car.speed)) - bonus) - (double(previousAbsSpeed) - previousBoostBonus_)) / double(dt) +
+            std::fmax((double(bonus) - previousBoostBonus_) / double(dt), 0.0);
         previousVelocity_ = velocity;
         previousYaw_ = bodyYaw;
+        previousTravelYaw_ = travelYaw;
         previousSpeed_ = car.speed;
+        previousBoostBonus_ = bonus;
 
         brakeCooldown_ = std::fmax(0, brakeCooldown_ - dt);
         const bool newBoost = car.boostSerial != observedBoostSerial_;
@@ -123,27 +146,53 @@ struct VehiclePresentation {
             kickLanding(clampf((car.landingImpact - 0.5f) / 5.5f, 0, 1), settings);
         advanceLanding(dt, settings);
 
-        // These load scales are presentation hypotheses: full roll at 12m/s^2,
-        // full pitch at 18m/s^2. Small deadbands remove numeric/low-speed chatter.
+        // The body sits on a spring: loads set where it wants to lean, and an
+        // underdamped spring carries it there, a little past, and back once.
+        // Steady loads use 75% of the limit (soft-saturated) so that headroom
+        // stays for that overshoot instead of pinning the body at its stop.
         // Positive roll lifts the car's right side in carModelMatrix, so a right
         // turn leans the body left, towards the outside of the corner.
+        // A held slide also scrubs its tyres sideways, adding a mild outward lean.
+        const float slide = car.drifting && car.driftHoldActive && car.onAsphalt ?
+            kSlideLean * clampf(std::sin(car.slipAngle) / 0.766f, -1, 1) : 0;
         const float rollTarget = !car.grounded || std::fabs(car.speed) < 0.25f ? 0 :
-            maxRoll * signedLoad(rightAcceleration, 12.0, 0.10);
-        const float pitchTarget = car.grounded ? maxPitch * signedLoad(forwardAcceleration, 18.0, 0.20) : 0;
-        roll = settle(roll, rollTarget, dt, settings.bodyResponseTime, settings.bodyRecoveryTime);
-        pitch = settle(pitch, pitchTarget, dt, settings.bodyResponseTime, settings.bodyRecoveryTime);
-        roll = boundedAngle(roll, maxRoll);
-        pitch = boundedAngle(pitch, maxPitch);
+            maxRoll * kTargetShare * std::tanh(softLoad(cornerAcceleration, 10.0, 0.10) + slide);
+        // Pitch follows the change of speed (throttle, brake, boost), not the
+        // sideways component of a slide, so a steady drift does not sit nose-up.
+        const float pitchTarget = car.grounded ?
+            maxPitch * kTargetShare * std::tanh(softLoad(driveAcceleration, 12.0, 0.20)) : 0;
+
+        // Weight is thrown outward as the slide starts, and back across as it
+        // is released. Both are velocity kicks, so the spring shapes them.
+        const bool entry = car.driftPhase == DriftPhase::Entry;
+        const float unit = unitPeak(settings);
+        if (entry && !wasEntry_ && car.grounded && car.speed > 5 && car.driftDirection != 0)
+            rollVelocity_ += car.driftDirection * kEntryFlick * settings.bodyFlickScale * maxRoll / unit;
+        if (wasHolding_ && !car.driftHoldActive && car.releaseEaseActive && car.grounded)
+            rollVelocity_ -= roll * kReleaseFlick * settings.bodyFlickScale / unit;
+        wasEntry_ = entry;
+        wasHolding_ = car.driftHoldActive;
+
+        spring(roll, rollVelocity_, rollTarget, dt, settings);
+        spring(pitch, pitchVelocity_, pitchTarget, dt, settings);
+        bindLean(roll, rollVelocity_, maxRoll);
+        bindLean(pitch, pitchVelocity_, maxPitch);
     }
 
 private:
     Vec3 previousVelocity_;
-    float previousYaw_ = 0;
-    float previousSpeed_ = 0;
+    float previousYaw_ = 0, previousTravelYaw_ = 0;
+    float previousSpeed_ = 0, previousBoostBonus_ = 0;
     unsigned observedBoostSerial_ = 0;
     unsigned observedLandingSerial_ = 0;
     bool brakeHeld_ = false;
     float brakeCooldown_ = 0;
+    float rollVelocity_ = 0, pitchVelocity_ = 0; // rad/s, carried by the body spring.
+    bool wasEntry_ = false, wasHolding_ = false;
+    static constexpr float kTargetShare = 0.75f; // Steady lean uses this share of the limit.
+    static constexpr float kSlideLean = 0.35f;   // Tyre-scrub lean of a held slide, in load units.
+    static constexpr float kEntryFlick = 0.35f;  // Entry kick's own peak, share of the roll limit.
+    static constexpr float kReleaseFlick = 0.6f; // Release kick's own peak, share of the current roll.
     float heaveVelocity_ = 0;
     float bounceAge_ = -1;
     float bounceReturn_ = 0.45f;
@@ -264,19 +313,43 @@ private:
     static float boundedAngle(float value, float limit) {
         return limit > 0 && std::isfinite(value) ? clampf(value, -limit, limit) : 0;
     }
-    static float signedLoad(double acceleration, double full, double deadband) {
-        if (std::isnan(acceleration)) return 0;
+    static float boostBonus(const Car& car) {
+        return std::isfinite(car.boostSpeedBonus) && car.boostSpeedBonus > 0 ? car.boostSpeedBonus : 0;
+    }
+    // Load beyond a small deadband, in units of "full"; tanh later saturates it softly.
+    static float softLoad(double acceleration, double full, double deadband) {
+        if (!std::isfinite(acceleration)) return 0;
         const double magnitude = std::fabs(acceleration);
         if (magnitude <= deadband) return 0;
-        const float amount = clampf(float((magnitude - deadband) / (full - deadband)), 0, 1);
+        const float amount = float((magnitude - deadband) / full);
         return acceleration < 0 ? -amount : amount;
     }
-    static float settle(float value, float target, float dt, float responseTime, float recoveryTime) {
-        const bool recovering = value * target >= 0 && std::fabs(target) < std::fabs(value);
-        // Time means 90% response, consistent with the game's other damping.
-        const float time90 = std::fmax(recovering ? recoveryTime : responseTime, 0.001f);
-        const float blend = -std::expm1(-2.302585093f * dt / time90);
-        const float result = value + (target - value) * blend;
-        return std::fabs(result) < 0.000001f && std::fabs(target) < 0.000001f ? 0 : result;
+    // Advances an underdamped spring towards a target held over dt. The step is
+    // the exact solution, so 30/60/120Hz and irregular frames give one motion.
+    static void spring(float& value, float& velocity, float target, float dt, const FeelSettings& settings) {
+        const float omega = 6.283185307f * settings.bodyLeanHz;
+        const float decay = settings.bodyLeanDamping * omega;
+        const float frequency = omega * std::sqrt(1 - settings.bodyLeanDamping * settings.bodyLeanDamping);
+        const float offset = value - target;
+        const float attenuation = std::exp(-decay * dt);
+        const float cosine = std::cos(frequency * dt), sine = std::sin(frequency * dt);
+        value = target + attenuation * (offset * cosine + (velocity + decay * offset) * sine / frequency);
+        velocity = attenuation * (velocity * cosine - (decay * velocity + omega * omega * offset) * sine / frequency);
+        // A settled body comes to rest exactly instead of trembling forever.
+        if (target == 0 && std::fabs(value) < 0.000001f && std::fabs(velocity) < 0.00001f) value = velocity = 0;
+    }
+    // Peak displacement produced by a unit velocity kick from rest.
+    static float unitPeak(const FeelSettings& settings) {
+        const float omega = 6.283185307f * settings.bodyLeanHz;
+        const float decay = settings.bodyLeanDamping * omega;
+        const float frequency = omega * std::sqrt(1 - settings.bodyLeanDamping * settings.bodyLeanDamping);
+        const float peakTime = std::atan(frequency / decay) / frequency;
+        return std::exp(-decay * peakTime) * std::sin(frequency * peakTime) / frequency;
+    }
+    // The limit is a bump stop: the angle cannot pass it and stops moving outward.
+    static void bindLean(float& value, float& velocity, float limit) {
+        if (!(limit > 0) || !std::isfinite(value) || !std::isfinite(velocity)) { value = velocity = 0; return; }
+        if (value > limit) { value = limit; velocity = std::fmin(velocity, 0.0f); }
+        if (value < -limit) { value = -limit; velocity = std::fmax(velocity, 0.0f); }
     }
 };

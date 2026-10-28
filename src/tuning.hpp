@@ -49,8 +49,9 @@ struct FeelSettings {
     float cameraSteerLookMax = 8.0f; // Degrees.
     float bodyRollMax = 4.0f; // Visual suspension only, degrees.
     float bodyPitchMax = 2.0f;
-    float bodyResponseTime = 0.12f;
-    float bodyRecoveryTime = 0.25f;
+    float bodyLeanHz = 1.8f;        // Sprung-body roll/pitch frequency; higher feels stiffer.
+    float bodyLeanDamping = 0.45f;  // Damping ratio; below 1 the body overshoots once and settles.
+    float bodyFlickScale = 1;       // Extra weight shift thrown in at drift entry and release.
     float bodyBounceHeight = 0.035f;
     float bodyBounceReturn = 0.45f;
     float boostBlurStrength = 0.65f;
@@ -115,8 +116,9 @@ inline FeelSettings sanitizeFeelSettings(FeelSettings settings) {
     FEEL_BOUND(cameraSteerLookMax, 0, 18);
     FEEL_BOUND(bodyRollMax, 0, 10);
     FEEL_BOUND(bodyPitchMax, 0, 6);
-    FEEL_BOUND(bodyResponseTime, 0.05f, 0.4f);
-    FEEL_BOUND(bodyRecoveryTime, 0.10f, 0.8f);
+    FEEL_BOUND(bodyLeanHz, 0.8f, 4);
+    FEEL_BOUND(bodyLeanDamping, 0.2f, 0.9f);
+    FEEL_BOUND(bodyFlickScale, 0, 2);
     FEEL_BOUND(bodyBounceHeight, 0, 0.08f);
     FEEL_BOUND(bodyBounceReturn, 0.20f, 1.0f);
     FEEL_BOUND(boostBlurStrength, 0, 2);
