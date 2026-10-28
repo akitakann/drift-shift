@@ -27,6 +27,8 @@ add_executable(racegame
     src/main.cpp
     src/track.cpp
     src/car.cpp
+    src/audio.cpp
+    src/trial.cpp
     src/render.cpp
 )
 
@@ -34,6 +36,9 @@ set(ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
 if(EMSCRIPTEN)
     message(STATUS "TARGET_PLATFORM=Browser (Emscripten)")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json" RELEASE_PRESET)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html" "${CMAKE_CURRENT_BINARY_DIR}/release-shell.html" @ONLY)
 
     set(EMSCRIPTEN_SDL_FLAGS
         "-sUSE_SDL=2"
@@ -83,10 +88,19 @@ if(EMSCRIPTEN)
         "-sMIN_WEBGL_VERSION=2"
         "-sMAX_WEBGL_VERSION=2"
         "-sFULL_ES3=1"
+        "SHELL:--shell-file ${CMAKE_CURRENT_BINARY_DIR}/release-shell.html"
         "SHELL:--preload-file ${ASSETS_DIR}@/assets"
     )
 
-    set_target_properties(racegame PROPERTIES SUFFIX ".html")
+    set_target_properties(racegame PROPERTIES OUTPUT_NAME "index" SUFFIX ".html")
+    set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+    set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json")
+    set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/release-shell.html")
+    set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/stamp_build.cmake")
+    add_custom_command(TARGET racegame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} "-DINPUT=$<TARGET_FILE:racegame>" "-DSHELL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html" -P "${CMAKE_CURRENT_SOURCE_DIR}/web/stamp_build.cmake"
+        COMMENT "Keep the page, JavaScript and WebAssembly on one asset version"
+    )
 
 else()
     message(STATUS "TARGET_PLATFORM=Native (${CMAKE_SYSTEM_NAME})")
@@ -124,4 +138,25 @@ else()
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Race game (Linux native build)")
     include(CPack)
 
+endif()
+
+# Native checks exercise handling, experiment metrics and offline audio separately.
+if(NOT EMSCRIPTEN)
+    enable_testing()
+    add_executable(drift-test tests/drift_test.cpp src/car.cpp src/track.cpp)
+    target_include_directories(drift-test PRIVATE src)
+    add_test(NAME handling COMMAND drift-test)
+    add_executable(trial-test tests/trial_test.cpp src/trial.cpp src/track.cpp)
+    target_include_directories(trial-test PRIVATE src)
+    add_test(NAME trial COMMAND trial-test)
+    add_executable(audio-test tests/audio_test.cpp)
+    target_include_directories(audio-test PRIVATE src)
+    target_link_libraries(audio-test PRIVATE PkgConfig::SDL2 PkgConfig::SDL2_MIXER)
+    add_test(NAME audio COMMAND audio-test)
+    add_executable(presentation-test tests/presentation_test.cpp src/car.cpp src/track.cpp)
+    target_include_directories(presentation-test PRIVATE src)
+    add_test(NAME presentation COMMAND presentation-test)
+    add_executable(vehicle-presentation-test tests/vehicle_presentation_test.cpp src/car.cpp src/track.cpp)
+    target_include_directories(vehicle-presentation-test PRIVATE src)
+    add_test(NAME vehicle-presentation COMMAND vehicle-presentation-test)
 endif()

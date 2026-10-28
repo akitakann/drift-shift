@@ -1,0 +1,15 @@
+# Emscripten emits a stable index.js filename. Version its URL together with
+# Module.locateFile's wasm/data requests to avoid mixing a new UI with old code.
+file(READ "${SHELL_SOURCE}" shell_text)
+string(REGEX MATCH "const VERSION = '([^']+)'" version_match "${shell_text}")
+if(NOT version_match)
+    message(FATAL_ERROR "The shell must declare a mechanics VERSION")
+endif()
+set(asset_version "${CMAKE_MATCH_1}")
+file(READ "${INPUT}" html)
+string(REPLACE "src=index.js" "src=index.js?v=${asset_version}" stamped "${html}")
+string(REPLACE "src=\"index.js\"" "src=\"index.js?v=${asset_version}\"" stamped "${stamped}")
+if(stamped STREQUAL html)
+    message(FATAL_ERROR "Expected the Emscripten index.js loader in ${INPUT}")
+endif()
+file(WRITE "${INPUT}" "${stamped}")

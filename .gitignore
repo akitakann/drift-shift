@@ -1,3 +1,9 @@
-build/
-build-native/
-build-package/
+/build/
+/build-native/
+/build-package/
+/build-tests/
+/build-pages/
+/.physics-test/
+/public/
+/_site/
+/CMakeUserPresets.json

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="description" content="横に滑り、ためて、解放するブラウザドリフトゲーム。">
+<title>DRIFT</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff;background:#000}
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#000}
+button,a,summary{touch-action:manipulation}
+button{font:inherit;border:1px solid #777;background:#181818;color:#fff;border-radius:4px;padding:10px 18px;cursor:pointer}
+button:hover:not(:disabled){background:#303030}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid #fff;outline-offset:4px}
+[hidden]{display:none!important}
+#viewport{width:100%;height:100%;display:grid;place-items:center;background:#000}
+#stage{position:relative;width:min(100vw,177.777778vh);height:min(100vh,56.25vw);overflow:hidden;background:#000}
+@supports(height:100dvh){#stage{width:min(100vw,177.777778dvh);height:min(100dvh,56.25vw)}}
+#canvas{display:block;width:100%;height:100%;outline:0;touch-action:none}
+#menu-button{position:absolute;top:12px;right:12px;z-index:1;padding:5px 11px;font-size:18px;line-height:1.3;background:#0009;border-color:#ffffff70}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;background:#080808e8;z-index:2;overflow:auto}
+.menu{width:min(540px,100%);max-height:100%;overflow:auto;text-align:center;padding:12px}
+h1{font-size:clamp(22px,5vw,42px);letter-spacing:.08em;line-height:1.2;margin:0 0 18px}
+.status{min-height:1.5em;margin:0 0 14px;font-size:13px;color:#ddd}
+progress{display:block;width:180px;height:5px;margin:0 auto 18px;accent-color:#fff}
+#primary{min-width:160px;background:#fff;color:#111;border-color:#fff;font-size:18px;font-weight:600}
+#primary:hover:not(:disabled){background:#ddd}
+.actions{display:flex;justify-content:center;flex-wrap:wrap;gap:8px;margin:12px 0}
+.actions button{font-size:13px;padding:7px 12px}
+.controls{font-size:12px;line-height:1.8;color:#ccc;margin:17px 0 0}
+details{margin-top:18px;text-align:left;font-size:11px;color:#bbb;line-height:1.7}
+summary{text-align:center;cursor:pointer;color:#ddd}
+details p{margin:8px 0}
+a{color:#eee;text-underline-offset:2px}
+@media(max-height:480px){.overlay{padding:8px}.menu{padding:5px}h1{margin-bottom:8px;font-size:24px}.status{margin-bottom:8px}.controls{margin-top:8px;font-size:11px}details{margin-top:8px}.actions{margin:8px 0}#primary{font-size:16px;padding:7px 18px}}
+</style>
+</head>
+<body>
+<main id="viewport">
+<div id="stage">
+<canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="ドリフトゲーム。WASDまたは矢印キーで運転、Space長押しでドリフト、離してブースト。PまたはEscで一時停止。" oncontextmenu="event.preventDefault()"></canvas>
+<button id="menu-button" type="button" aria-label="メニューを開く（Esc）" title="一時停止（Esc）" hidden>Ⅱ</button>
+<section class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
+<div class="menu">
+<h1 id="menu-title">DRIFT</h1>
+<p class="status" id="status" role="status" aria-live="polite">読み込み中…</p>
+<progress id="progress" max="100" value="0" aria-label="ゲームの読み込み"></progress>
+<button id="primary" type="button" disabled>開始</button>
+<div class="actions" id="actions">
+<button id="restart" type="button" hidden>最初から走る</button>
+<button id="mute" type="button" aria-pressed="false">音 ON</button>
+<button id="fullscreen" type="button">全画面</button>
+<button id="reload" type="button" hidden>読み込み直す</button>
+</div>
+<p class="controls" id="controls">W / ↑ アクセル　S / ↓ ブレーキ<br>A D / ← → ハンドル　Space 長押しでドリフト・離してブースト<br>P / Esc 一時停止　R リスタート　M 音</p>
+<details id="credits">
+<summary>クレジット</summary>
+<p>ベース: <a href="https://github.com/BandaiNamcoStudios-Workshop/ge-i26-racegame" target="_blank" rel="noopener noreferrer">BandaiNamcoStudios-Workshop / ge-i26-racegame</a>。</p>
+<p>エンジン音: <a href="https://freesound.org/people/qubodup/sounds/147242/" target="_blank" rel="noopener noreferrer">Car Engine Loop — qubodup</a>（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>）。公開HQプレビュー0〜4秒をWAV化し、音量調整・50msループ境界加工。再生速度を車の動きに合わせて変更しています。</p>
+<p>タイヤ音: <a href="https://freesound.org/people/audible-edge/sounds/71739/" target="_blank" rel="noopener noreferrer">Chrysler LHS tire squeal 04 — audible-edge</a>（<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0 1.0</a>）。公開HQプレビュー8〜14秒をWAV化し、音量調整・50msループ境界加工・180Hzハイパス処理。</p>
+<p>地図: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>（<a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">ODbL</a>）、<a href="https://www.openstreetmap.org/relation/284570" target="_blank" rel="noopener noreferrer">鈴鹿サーキットの中心線</a>。標高: 出典 <a href="https://www.gsi.go.jp/" target="_blank" rel="noopener noreferrer">国土地理院</a>の標高タイル。</p>
+<p>車両・演出と、チャージ・ブースト・衝突・風・着地音はプログラムで生成しています。本作は課題用の非公式ゲームです。</p>
+</details>
+</div>
+</section>
+</div>
+</main>
+<script>
+(function(){
+  'use strict';
+  const VERSION = 'release-v1-pressure-grass';
+  const PRESET = @RELEASE_PRESET@;
+  const $=id=>document.getElementById(id);
+  const canvas=$('canvas'),overlay=$('overlay');
+  const presetModel=PRESET.handlingModel===1?1:0;
+  window.driftLab={ready:false,started:false,command:0,group:0,candidate:presetModel,handlingModel:presetModel,muted:false,tuningOverrides:{...PRESET.tuning},tuningRevision:0};
+  let runtimeReady=false,fatal=false,state={},desiredPause=null;
+  let menuNotice='';
+  function audioContext(){
+    if(typeof SDL2!=='undefined'&&SDL2.audioContext)return SDL2.audioContext;
+    return window.Module&&window.Module.audioContext||null;
+  }
+  function unlockAudio(){
+    try{
+      const context=audioContext();
+      if(context&&context.state==='suspended')context.resume().catch(()=>{menuNotice='音を出すには、もう一度「音 ON」を押してください。';paintMenu();});
+    }catch(_){}
+  }
+  function focusCanvas(){
+    if(!document.hidden)canvas.focus({preventScroll:true});
+  }
+  function releaseDrivingKeys(){
+    for(const [key,code,keyCode] of [['w','KeyW',87],['a','KeyA',65],['s','KeyS',83],['d','KeyD',68],[' ','Space',32],['ArrowUp','ArrowUp',38],['ArrowDown','ArrowDown',40],['ArrowLeft','ArrowLeft',37],['ArrowRight','ArrowRight',39]]){
+      canvas.dispatchEvent(new KeyboardEvent('keyup',{key,code,keyCode,which:keyCode,bubbles:true}));
+    }
+  }
+  function paused(){return desiredPause===null?!!state.paused:desiredPause;}
+  function paintMenu(){
+    const wasHidden=overlay.hidden;
+    const show=fatal||!window.driftLab.started||paused()||!!state.finished;
+    overlay.hidden=!show;
+    $('menu-button').hidden=show;
+    $('menu-button').disabled=!runtimeReady||fatal;
+    $('mute').textContent=window.driftLab.muted?'音 OFF':'音 ON';
+    $('mute').setAttribute('aria-pressed',String(window.driftLab.muted));
+    $('mute').hidden=fatal;
+    $('fullscreen').hidden=fatal;
+    $('primary').disabled=!runtimeReady||fatal;
+    $('primary').hidden=fatal;
+    $('reload').hidden=!fatal;
+    $('restart').hidden=!window.driftLab.started||fatal;
+    $('progress').hidden=runtimeReady||fatal;
+    $('controls').hidden=fatal;
+    if(fatal)return;
+    $('menu-title').textContent=window.driftLab.started?'一時停止':'DRIFT';
+    $('primary').textContent=window.driftLab.started?(state.finished?'もう一度走る':'再開'):'開始';
+    $('status').textContent=menuNotice||(!runtimeReady?'読み込み中…':'Spaceをためて、離してブースト。');
+    if(show&&wasHidden&&document.hasFocus()&&!document.hidden)$('primary').focus({preventScroll:true});
+  }
+  function startOrResume(restart=false){
+    if(!runtimeReady||fatal)return;
+    unlockAudio();
+    releaseDrivingKeys();
+    const first=!window.driftLab.started;
+    window.driftLab.started=true;
+    desiredPause=false;
+    menuNotice='';
+    window.driftLab.command=first||restart||state.finished?1:5;
+    state={...state,finished:false};
+    $('credits').open=false;
+    paintMenu();
+    focusCanvas();
+  }
+  function requestPause(notice=''){
+    if(!runtimeReady||!window.driftLab.started||fatal)return;
+    desiredPause=true;
+    menuNotice=notice;
+    window.driftLab.command=4;
+    releaseDrivingKeys();
+    paintMenu();
+  }
+  function fail(message){
+    if(fatal)return;
+    fatal=true;window.driftLab.muted=true;
+    if(window.driftLab.started)window.driftLab.command=4;
+    releaseDrivingKeys();
+    $('menu-title').textContent='読み込めませんでした';
+    $('status').textContent=message;
+    try{const context=audioContext();if(context)context.suspend().catch(()=>{});}catch(_){}
+    paintMenu();
+    if(document.hasFocus()&&!document.hidden)$('reload').focus({preventScroll:true});
+  }
+  $('primary').addEventListener('click',()=>startOrResume());
+  $('restart').addEventListener('click',()=>startOrResume(true));
+  $('menu-button').addEventListener('click',()=>requestPause());
+  $('mute').addEventListener('click',()=>{
+    window.driftLab.muted=!window.driftLab.muted;
+    menuNotice='';
+    if(!window.driftLab.muted)unlockAudio();
+    paintMenu();
+  });
+  $('reload').addEventListener('click',()=>window.location.reload());
+  $('fullscreen').addEventListener('click',async()=>{
+    try{
+      if(document.fullscreenElement)await document.exitFullscreen();
+      else if($('viewport').requestFullscreen)await $('viewport').requestFullscreen();
+      else throw new Error('unavailable');
+    }catch(_){menuNotice='この環境では全画面にできません。';paintMenu();}
+  });
+  canvas.addEventListener('pointerdown',()=>{if(window.driftLab.started&&!paused()&&!fatal)focusCanvas();});
+  canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();fail('描画が中断されました。読み込み直して、もう一度お試しください。');});
+  window.addEventListener('driftgame-error',event=>{
+    const message=event.detail&&event.detail.message;
+    fail(typeof message==='string'&&message?message:'ゲームを開始できませんでした。読み込み直して、もう一度お試しください。');
+  });
+  window.addEventListener('driftlab-state',event=>{
+    const detail=event.detail;
+    if(!detail||typeof detail!=='object'||fatal)return;
+    state={...state,paused:!!detail.paused,finished:!!detail.finished};
+    if(desiredPause!==null&&state.paused===desiredPause&&window.driftLab.command===0)desiredPause=null;
+    paintMenu();
+  });
+  window.addEventListener('blur',()=>requestPause('画面を離れたため一時停止しました。'));
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)requestPause('画面を離れたため一時停止しました。');});
+  // Menu keys must not reach SDL; keyup always passes so driving keys clear.
+  window.addEventListener('keydown',event=>{
+    if(event.code==='Digit1'||event.code==='Digit2'||event.code==='Numpad1'||event.code==='Numpad2'){event.preventDefault();event.stopImmediatePropagation();return;}
+    if(event.code==='Tab'&&!overlay.hidden){trapMenuFocus(event);event.stopImmediatePropagation();return;}
+    if(!event.repeat&&runtimeReady&&window.driftLab.started&&!fatal&&(event.code==='Escape'||event.code==='KeyP'&&!overlay.hidden)){
+      event.preventDefault();event.stopImmediatePropagation();
+      if(overlay.hidden)requestPause();else startOrResume();
+      return;
+    }
+    if(!overlay.hidden||event.target!==canvas){event.stopImmediatePropagation();return;}
+    if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.code))event.preventDefault();
+  },true);
+  window.addEventListener('keypress',event=>{if(!overlay.hidden||event.target!==canvas)event.stopImmediatePropagation();},true);
+  function trapMenuFocus(event){
+    const controls=Array.from(overlay.querySelectorAll('button:not([hidden]):not(:disabled),summary,a[href]')).filter(el=>el.getClientRects().length);
+    if(!controls.length)return;
+    const first=controls[0],last=controls[controls.length-1];
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+  }
+  function resizeCanvas(){
+    const rect=canvas.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,1.5);
+    const width=Math.max(1,Math.round(rect.width*dpr)),height=Math.max(1,Math.round(rect.height*dpr));
+    if(canvas.width!==width)canvas.width=width;
+    if(canvas.height!==height)canvas.height=height;
+  }
+  window.addEventListener('resize',resizeCanvas);
+  document.addEventListener('fullscreenchange',()=>requestAnimationFrame(resizeCanvas));
+  if(window.ResizeObserver)new ResizeObserver(resizeCanvas).observe($('stage'));
+  window.addEventListener('error',event=>{if(event.target instanceof HTMLScriptElement)fail('ゲームの読み込みに失敗しました。通信を確認して、読み込み直してください。');},true);
+  window.addEventListener('unhandledrejection',()=>{if(!runtimeReady)fail('ゲームを開始できませんでした。通信を確認して、読み込み直してください。');});
+  window.Module={
+    canvas,
+    print:text=>console.log(text),
+    printErr:text=>console.error(text),
+    setStatus:text=>{
+      const match=String(text).match(/\((\d+(?:\.\d+)?)\/(\d+)\)/);
+      if(match&&Number(match[2])>0)$('progress').value=Math.min(100,Number(match[1])/Number(match[2])*100);
+    },
+    monitorRunDependencies:function(left){
+      this.totalDependencies=Math.max(this.totalDependencies||0,left);
+      $('progress').value=this.totalDependencies?(1-left/this.totalDependencies)*100:100;
+    },
+    onRuntimeInitialized:()=>{
+      runtimeReady=true;window.driftLab.ready=true;
+      $('progress').value=100;
+      paintMenu();requestAnimationFrame(resizeCanvas);
+      if(document.hasFocus()&&!document.hidden)$('primary').focus({preventScroll:true});
+    },
+    onAbort:()=>fail('ゲームを読み込めませんでした。読み込み直して、もう一度お試しください。'),
+    locateFile:(path,prefix)=>{
+      const url=new URL(path,new URL(prefix||'./',window.location.href));
+      url.searchParams.set('v',VERSION);
+      return url.href;
+    }
+  };
+  paintMenu();resizeCanvas();
+})();
+var Module = window.Module;
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

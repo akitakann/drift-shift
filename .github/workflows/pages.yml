@@ -1,0 +1,76 @@
+name: Build and publish browser game
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Test drift handling
+        run: |
+          mkdir -p build-tests
+          g++ -std=c++17 -O2 -Isrc tests/drift_test.cpp src/car.cpp src/track.cpp -o build-tests/drift-test
+          ./build-tests/drift-test
+      - name: Build WebAssembly with Emscripten 3.1.64
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/src" -w /src \
+            emscripten/emsdk:3.1.64 \
+            sh -ec 'emcmake cmake -S . -B build-pages -DCMAKE_BUILD_TYPE=Release
+                    cmake --build build-pages --parallel 2'
+      - name: Prepare static files
+        run: |
+          set -eu
+          mkdir public
+          for file in index.html index.js index.wasm index.data; do
+            test -s "build-pages/$file"
+            cp "build-pages/$file" public/
+          done
+          cat assets/audio/CREDITS.md > public/credits.txt
+          cat >> public/credits.txt <<'CREDITS'
+
+          ## Game template and course data
+
+          Base template: BandaiNamcoStudios-Workshop/ge-i26-racegame
+          https://github.com/BandaiNamcoStudios-Workshop/ge-i26-racegame
+
+          Course geometry: (c) OpenStreetMap contributors, relation 284570.
+          Open Database License (ODbL): https://www.openstreetmap.org/copyright
+          https://opendatacommons.org/licenses/odbl/1-0/
+
+          Course elevation: Geospatial Information Authority of Japan elevation tiles.
+          Changes: elevation samples are interpolated and world-scaled into the game road mesh.
+          https://www.gsi.go.jp/
+          https://www.gsi.go.jp/kikakuchousei/kikakuchousei40182.html
+          CREDITS
+          printf '\nCourse data: https://github.com/%s/blob/%s/assets/track/suzuka.txt\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> public/credits.txt
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

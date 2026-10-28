@@ -1,0 +1,40 @@
+{
+  "selectedByUser": [
+    "engine-c",
+    "tire-a"
+  ],
+  "assets": [
+    {
+      "id": "engine-c",
+      "title": "Car Engine Loop",
+      "author": "qubodup",
+      "sourceUrl": "https://freesound.org/people/qubodup/sounds/147242/",
+      "license": "CC BY 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "downloadUrl": "https://cdn.freesound.org/previews/147/147242_71257-hq.mp3",
+      "downloadKind": "preview",
+      "file": "engine-c.wav",
+      "changes": "Excerpt 0.00–4.00 seconds; decode/resample to 44.1kHz stereo PCM16 WAV; 50ms loop crossfade; fixed gain +10.86dB",
+      "duration": 3.95,
+      "peak": 0.373849,
+      "sha256": "5ffc4a741cbb653533c601b4ea910785d4df6c5aed1f54bc2df9394a409f189d",
+      "sourceSha256": "34fe479fe58d6edec47559eff76cb8d7bea7ff52ca2d8bd32729775ea1a57b9a"
+    },
+    {
+      "id": "tire-a",
+      "title": "Chrysler LHS tire squeal 04 (04-25-2009).wav",
+      "author": "audible-edge",
+      "sourceUrl": "https://freesound.org/people/audible-edge/sounds/71739/",
+      "license": "CC0 1.0",
+      "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "downloadUrl": "https://cdn.freesound.org/previews/71/71739_995351-hq.mp3",
+      "downloadKind": "preview",
+      "file": "tire-a.wav",
+      "changes": "Excerpt 8.00–14.00 seconds; decode/resample to 44.1kHz stereo PCM16 WAV; 50ms loop crossfade; fixed gain +2.31dB; 180Hz high-pass to reduce engine/bass contamination",
+      "duration": 5.95,
+      "peak": 0.548259,
+      "sha256": "2ecd2b162562df2094dfc913f0ff6a5d97c16a74cd8466a15625f1e86df4d87f",
+      "sourceSha256": "9e64108df59e561f8fe6f08090b65febd32a5539b5be49f947227d0869629dd1"
+    }
+  ]
+}
