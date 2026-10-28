@@ -36,6 +36,7 @@ struct DriftEffects {
         observedBoost_ = observedLanding_ = 0;
         wasEntry_ = false;
         primed_ = false;
+        groundTrail_[0] = groundTrail_[1] = false;
         sparkCarry_ = 0;
     }
 
@@ -76,17 +77,29 @@ struct DriftEffects {
         if (boosting) { intensity = std::fmax(intensity, 0.75f + 0.25f * boostGlow); life = 0.7f; }
         const Vec3 color = levelColor(charge) * intensity;
         const bool emitting = intensity > 0.02f && car.speed > 3;
-        const Vec3 lights[2] = {rearLeft, rearRight};
+        // While sliding the body is 45-60 degrees off its path, so ribbons from
+        // the tail lights would twist across the screen. Instead they run flat
+        // on the road from the rear tyres and draw the line actually driven.
+        const bool onRoad = car.drifting && car.driftHoldActive && car.grounded;
+        Vec3 sources[2] = {rearLeft, rearRight};
+        if (onRoad) {
+            for (int i = 0; i < 2; ++i)
+                sources[i] = Vec3{car.x, car.y + 0.14f, car.z} + forward * -1.38f + right * (i == 0 ? -0.82f : 0.82f);
+        }
         for (int i = 0; i < 2; ++i) {
             auto& side = trail[i];
             if (!emitting) { if (!side.empty()) side.back().breakAfter = true; continue; }
-            Vec3 toCamera = camera - lights[i];
-            Vec3 along = side.empty() ? forward * -1.0f : lights[i] - side.back().left * 0.5f - side.back().right * 0.5f;
-            Vec3 width = cross(along, toCamera);
+            if (onRoad != groundTrail_[i] && !side.empty()) side.back().breakAfter = true;
+            const bool fresh = side.empty() || side.back().breakAfter || onRoad != groundTrail_[i];
+            groundTrail_[i] = onRoad;
+            Vec3 along = fresh ? Vec3{std::sin(car.travelYaw), 0, std::cos(car.travelYaw)} * -1.0f
+                               : sources[i] - side.back().left * 0.5f - side.back().right * 0.5f;
+            Vec3 width = onRoad ? cross(along, Vec3{0, 1, 0}) : cross(along, camera - sources[i]);
             const float len = length(width);
             width = len > 1e-4f ? width * (1.0f / len) : Vec3{0, 1, 0};
-            const float half = 0.028f + 0.04f * clampf(intensity, 0, 1);
-            side.push_back({lights[i] - width * half, lights[i] + width * half, color, 0, life, false});
+            const float half = onRoad ? 0.10f + 0.03f * clampf(intensity, 0, 1)
+                                      : 0.028f + 0.04f * clampf(intensity, 0, 1);
+            side.push_back({sources[i] - width * half, sources[i] + width * half, color, 0, life, false});
             if (side.size() > 240) side.pop_front();
         }
 
@@ -214,6 +227,7 @@ struct DriftEffects {
 private:
     unsigned observedBoost_ = 0, observedLanding_ = 0;
     bool wasEntry_ = false, primed_ = false;
+    bool groundTrail_[2] = {false, false};
     float sparkCarry_ = 0;
     std::uint32_t seed_ = 0x9e3779b9u;
 
