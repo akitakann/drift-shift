@@ -28,6 +28,9 @@ constexpr float kAngleCommandRate = 45.0f * 3.14159265f / 180.0f;
 constexpr float kHeldSlowdown = 1.0f;
 constexpr float kHeldSpeedRetention = 0.90f;
 constexpr float kReleaseEaseDuration = 0.15f;
+constexpr float kWallKeep = 0.55f;   // Share of the pre-impact speed a wall glance keeps.
+constexpr float kWallAlign = 14.0f;  // Rate at which a nose-in body swings along the wall, 1/s.
+constexpr float kWallMaxAngle = 25.0f * 3.14159265f / 180.0f; // Sharpest nose-in pose kept on contact.
 
 float maxSteerAt(float speed) {
     return 0.46f / (1.0f + std::fabs(speed) * 0.085f);
@@ -389,7 +392,28 @@ void Car::updateSupport(float dt, const Track& track) {
             impact=outward;
             vx-=nx*outward;vz-=nz*outward;
             const float direction=speed>=0?1.0f:-1.0f;
+            // Arcade glance: forward impacts deflect along the wall and keep
+            // part of their pace instead of stopping dead against it.
+            float tangentX=nz,tangentZ=-nx;
+            const float along=vx*tangentX+vz*tangentZ;
+            const float bodyAlong=std::sin(yaw)*tangentX+std::cos(yaw)*tangentZ;
+            if (along<0 || (std::fabs(along)<.5f && bodyAlong<0)) {tangentX=-tangentX;tangentZ=-tangentZ;}
+            if (direction>0 && beforeImpactSpeed>kMinDriftSpeed) {
+                const float kept=std::fmax(std::fabs(along),beforeImpactSpeed*kWallKeep);
+                vx=tangentX*kept;vz=tangentZ*kept;
+            }
             speed=std::sqrt(vx*vx+vz*vz)*direction;
+            if (direction>0 && grounded) {
+                // Swing the body to follow the wall so it cannot stay pinned
+                // nose-in, losing speed to the wall on every step.
+                const float wallYaw=std::atan2(tangentX,tangentZ);
+                const float into=std::sin(yaw)*nx+std::cos(yaw)*nz;
+                if (into>0) {
+                    float offset=wrapPi(yaw-wallYaw);
+                    offset=clampf(offset,-kWallMaxAngle,kWallMaxAngle);
+                    yaw=wrapPi(wallYaw+offset*std::exp(-kWallAlign*dt));
+                }
+            }
             if (boostSpeedBonus>0 && beforeImpactSpeed>0)
                 boostSpeedBonus*=std::fabs(speed)/beforeImpactSpeed;
             if (std::fabs(speed)>.01f) {

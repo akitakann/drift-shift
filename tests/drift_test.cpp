@@ -1798,10 +1798,13 @@ void testScaledCollision() {
         small.x=side*(road.wallLateral()+.3f);large.x=side*(enlarged.wallLateral()+.3f);
         small.yaw=small.travelYaw=large.yaw=large.travelYaw=side*1.57079632679f;
         small.update(kDt,{},road);large.update(kDt,{},enlarged);
-        check(small.impact>19 && large.impact>19 && std::fabs(small.speed)<.001f && std::fabs(large.speed)<.001f &&
+        // A head-on barrier hit glances along the wall and keeps 55% of its pace.
+        const auto alongWall=[](const Car& car){return std::fabs(std::cos(car.travelYaw)*car.speed);};
+        check(small.impact>19 && large.impact>19 && near(small.speed,11,.01f) && near(large.speed,11,.01f) &&
+              near(alongWall(small),11,.01f) && near(alongWall(large),11,.01f) &&
               near(std::fabs(small.x),road.wallLateral(),.0001f) &&
               near(std::fabs(large.x),enlarged.wallLateral(),.0001f),
-              "the same car collides with both scaled barrier sides at the corresponding world boundary");
+              "the same car glances off both scaled barrier sides at the corresponding world boundary");
     }
 }
 
@@ -1956,8 +1959,9 @@ void testVerticalContact() {
     airborneWall.boostSpeedBonus=18;
     airborneWall.update(kDt,none,wall);
     check(!airborneWall.grounded && airborneWall.y>2.99f && airborneWall.verticalSpeed<0 &&
-          airborneWall.impact>39 && airborneWall.speed<.001f && airborneWall.boostRemaining==0,
-          "the existing side barrier removes outward air momentum and reward without canceling gravity");
+          airborneWall.impact>39 && near(airborneWall.speed,22,.01f) &&
+          near(std::fabs(std::cos(airborneWall.travelYaw)),1,.0001f) && airborneWall.boostRemaining==0,
+          "the side barrier turns outward air momentum along the wall, clears the reward and keeps gravity");
     std::printf("vertical contact: crest air %.3fs, dip clearance %.3fm, flat landing %.2fm/s; gravity/reverse/bridge/replay/resize green\n",
                 crestAir,dipClearance,impact);
 }

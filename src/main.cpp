@@ -334,6 +334,25 @@ void readSettings(App& app) {
         },field.name));
         if(std::isfinite(value)) {app.settings.*(field.member)=value;++app.tuningOverrideCount;}
     }
+#else
+    // Native builds read the same release preset as the browser page.
+    for(const char* path:{"web/release-preset.json","../web/release-preset.json"}) {
+        std::ifstream in(path);
+        if(!in) continue;
+        std::stringstream buffer;buffer<<in.rdbuf();
+        const std::string text=buffer.str();
+        if(text.find("\"handlingModel\": 1")!=std::string::npos) app.selectedModel=DriftModel::LineControl;
+        for(const auto& field:kRuntimeTuningFields) {
+            const std::string key=std::string("\"")+field.name+"\"";
+            const size_t at=text.find(key);
+            if(at==std::string::npos) continue;
+            const size_t colon=text.find(':',at+key.size());
+            if(colon==std::string::npos) continue;
+            const float value=std::strtof(text.c_str()+colon+1,nullptr);
+            if(std::isfinite(value)) {app.settings.*(field.member)=value;++app.tuningOverrideCount;}
+        }
+        break;
+    }
 #endif
     app.settings=sanitizeFeelSettings(app.settings);
 }
