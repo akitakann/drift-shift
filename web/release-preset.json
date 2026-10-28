@@ -57,6 +57,6 @@
     "suspensionTravel": 0.2,
     "tireGain": 0.25,
     "topSpeedKmh": 200,
-    "windGain": 0.6
+    "windGain": 0.1
   }
 }
