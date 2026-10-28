@@ -101,7 +101,7 @@ struct DriftEffects {
                 sparkCarry_ -= 1;
                 const Vec3 kick = travel * (car.speed * 0.55f) + right * (outward * random(1.5f, 4.5f)) +
                                   Vec3{0, random(1.5f, 4.0f), 0} + forward * random(-2.5f, -0.5f);
-                spawn(tyre, kick, mix(levelColor(car.driftChargeLevel), {1, 1, 0.9f}, random(0, 0.35f)), random(0.18f, 0.38f), 0.045f);
+                spawn(tyre, kick, mix(levelColor(car.driftChargeLevel), {1, 1, 0.9f}, random(0, 0.35f)), random(0.18f, 0.38f), random(0.04f, 0.07f));
             }
         } else {
             sparkCarry_ = 0;
@@ -119,7 +119,7 @@ struct DriftEffects {
                     const float a = random(0, 6.2831853f);
                     const Vec3 spray = forward * random(-9.0f, -3.0f) + right * (std::cos(a) * random(2, 7)) +
                                        Vec3{0, std::fabs(std::sin(a)) * random(2, 6), 0} + travel * (car.speed * 0.6f);
-                    spawn(tail, spray, mix(levelColor(level), {1, 1, 1}, random(0, 0.5f)), random(0.25f, 0.55f), 0.06f);
+                    spawn(tail, spray, mix(levelColor(level), {1, 1, 1}, random(0, 0.5f)), random(0.25f, 0.55f), random(0.06f, 0.11f));
                 }
                 shake = std::fmax(shake, 0.05f + 0.035f * level);
                 boostGlow = 1;
@@ -141,7 +141,7 @@ struct DriftEffects {
             for (int n = 0; n < count; ++n) {
                 const Vec3 v = travel * (car.speed * random(0.3f, 0.8f)) +
                                Vec3{car.ground.rightX, 0, car.ground.rightZ} * (-side * random(1, 5)) + Vec3{0, random(1, 5), 0};
-                spawn(contact, v, mix(Vec3{1, 0.55f, 0.12f}, {1, 0.95f, 0.6f}, random(0, 0.6f)), random(0.2f, 0.5f), 0.05f);
+                spawn(contact, v, mix(Vec3{1, 0.55f, 0.12f}, {1, 0.95f, 0.6f}, random(0, 0.6f)), random(0.2f, 0.5f), random(0.04f, 0.08f));
             }
             shake = std::fmax(shake, clampf(car.impact * 0.006f, 0.02f, 0.16f));
         }
@@ -174,16 +174,31 @@ struct DriftEffects {
                 addQuadColors(mesh, a.left, a.right, b.right, b.left, a.color * fa, b.color * fb);
             }
         }
+        // Sparks are tiny tumbling cubes, matching the block-built car.
         for (const auto& s : sparks) {
             const float k = 1 - s.age / s.life;
-            const Vec3 tail = s.position - s.velocity * 0.025f;
-            Vec3 width = cross(s.position - tail, camera - s.position);
-            const float len = length(width);
-            if (len < 1e-5f) continue;
-            width = width * (s.size / len);
-            const Vec3 c = s.color * (0.4f + 0.6f * k);
-            addQuadColors(mesh, tail - width, tail + width, s.position + width, s.position - width, c * 0.2f, c);
+            const float h = s.size * (0.6f + 0.6f * k);
+            const Vec3 c = s.color * (0.45f + 0.55f * k);
+            const float a = s.age * 17.0f + s.size * 400.0f;
+            const Vec3 u{std::cos(a) * h, std::sin(a) * h, 0}, v{-std::sin(a) * h, std::cos(a) * h, 0}, w{0, 0, h};
+            const Vec3 p = s.position;
+            const Vec3 corners[8] = {p - u - v - w, p + u - v - w, p + u + v - w, p - u + v - w,
+                                     p - u - v + w, p + u - v + w, p + u + v + w, p - u + v + w};
+            const int faces[6][4] = {{3, 2, 6, 7}, {0, 1, 5, 4}, {1, 2, 6, 5}, {0, 4, 7, 3}, {4, 5, 6, 7}, {0, 3, 2, 1}};
+            for (const auto& f : faces) addQuadColors(mesh, corners[f[0]], corners[f[1]], corners[f[2]], corners[f[3]], c, c);
         }
+    }
+
+    // Collecting a charge cell: a burst of cubes in the newly reached colour.
+    void pickupBurst(Vec3 at, int level, bool charged) {
+        const Vec3 color = charged ? levelColor(std::max(level, 1)) : Vec3{1.0f, 0.85f, 0.3f};
+        for (int n = 0; n < (charged ? 26 : 14); ++n) {
+            const float a = random(0, 6.2831853f), up = random(-0.3f, 1.0f);
+            const Vec3 v{std::cos(a) * random(3, 8), up * random(3, 7) + 2, std::sin(a) * random(3, 8)};
+            spawn(at, v, mix(color, {1, 1, 0.85f}, random(0, 0.5f)), random(0.3f, 0.6f), random(0.07f, 0.13f));
+        }
+        flashes.push_back({at - Vec3{0, 1.0f, 0}, std::clamp(level, 1, 3), 0, 0.22f, charged ? 3.0f : 1.8f});
+        if (charged) shake = std::fmax(shake, 0.03f);
     }
 
     // Flat expanding discs: level, model matrix and opacity for drawGlow(radial).

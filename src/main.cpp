@@ -7,6 +7,7 @@
 #include "presentation.hpp"
 #include "vehicle_presentation.hpp"
 #include "effects.hpp"
+#include "items.hpp"
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_mixer.h>
@@ -100,6 +101,8 @@ struct App {
     Car car;
     GpuMesh course,body,wheel,shadow,tireMesh,smokeMesh,boostJet,fxMesh;
     DriftEffects fx;
+    ChargeItems items;
+    GpuMesh itemSolid,itemGlow;
     GpuMesh chargeWheel[3],chargeHalo[3];
     DriftAudio audio;
     TrialSession trial;
@@ -372,6 +375,7 @@ void applyStageScale(App& app,bool preservePose) {
     const float ratio=app.settings.stageScale/app.stageScale;
     const Vec3 previous{app.car.x,app.car.y,app.car.z};
     app.track.scaleBy(ratio);
+    app.items.build(app.track);
     app.stageScale=app.settings.stageScale;
     app.renderer.updateMesh(app.course,app.track.visual);
     if(preservePose) {
@@ -454,6 +458,7 @@ void resetTrial(App& app,bool replay=false) {
     }
     applyStageScale(app,false);
     app.car.reset(app.track);
+    app.items.reset();
     app.car.speed=app.freeDriving()?0:TrialCourse::entrySpeedKmh/3.6f;
     app.car.driftModel=replay?app.recordingModel:app.selectedModel;
     app.car.applyTuning(app.settings);
@@ -780,6 +785,15 @@ void drawSpeedCues(App& app) {
     }
 }
 
+void drawItems(App& app,Vec3 eye) {
+    CpuMesh solid,glow;
+    app.items.buildMeshes(solid,glow,eye);
+    app.renderer.updateMesh(app.itemSolid,solid);
+    app.renderer.updateMesh(app.itemGlow,glow);
+    app.renderer.draw(app.itemSolid,Mat4{});
+    app.renderer.drawGlow(app.itemGlow,Mat4{},1);
+}
+
 void drawDriftEffects(App& app,Vec3 eye) {
     app.fx.forEachFlash([&](int level,const Mat4& model,float opacity){
         app.renderer.drawGlow(app.chargeHalo[std::clamp(level,1,3)-1],model,opacity,true);
@@ -986,6 +1000,10 @@ void frame(void* userdata) {
             if(app.freeDriving()) app.trial.tickPractice(app.car,drive,float(kFixedStepSec));
             else app.trial.tick(app.car,drive,float(kFixedStepSec));
             tickEffects(app,float(kFixedStepSec));
+            for(const auto& pickup:app.items.update(float(kFixedStepSec),app.car)) {
+                app.fx.pickupBurst(pickup.position,pickup.level,pickup.charged);
+                app.audio.pickup(pickup.step);
+            }
             app.fx.tick(float(kFixedStepSec),app.car,bodyMatrix(app),app.camera.eye);
             ++app.frameNumber;
             app.accumulator-=kFixedStepSec;
@@ -1018,6 +1036,7 @@ void frame(void* userdata) {
     app.renderer.beginWorld(mul(proj,lookAt(eye,look,{0,1,0})),eye);
     app.renderer.draw(app.course,Mat4{}); drawEffects(app);
     drawGroundShadow(app);
+    drawItems(app,eye);
     Mat4 model=mul(translation(0,app.car.grounded?app.car.groundHeight-app.car.y:0,0),carModelMatrix(app.car,app.car.terrainPitch,app.car.terrainRoll));
     const Mat4 bodyModel=bodyMatrix(app);
     app.renderer.draw(app.body,bodyModel);
@@ -1189,6 +1208,7 @@ int main(int argc,char** argv) {
     if(audioOk) audioOk=app.audio.init();
     if(!audioOk) SDL_Log("Audio unavailable: %s",Mix_GetError());
     app.course=app.renderer.upload(app.track.visual);
+    app.items.build(app.track);
     CpuMesh body,wheel,shadow,smoke,jet;
     buildCarBody(body);buildCarWheel(wheel);buildCarShadow(shadow);
     smoke.addQuad({-1,-1,0},{1,-1,0},{1,1,0},{-1,1,0},{0,0,-1},{0.72f,0.74f,0.76f});

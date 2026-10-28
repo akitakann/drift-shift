@@ -597,6 +597,16 @@ void Car::applyTuning(const FeelSettings& rawSettings) {
     boostSpeedReturn = settings.boostSpeedReturn;
 }
 
+bool Car::addCharge(float amount) {
+    if (!(amount > 0) || !std::isfinite(amount)) return false;
+    if (!grounded || !onAsphalt || !drifting || !driftHeld || !driftHoldActive || speed <= kMinDriftSpeed) return false;
+    driftCharge = std::fmin(driftCharge + amount, kChargeThresholds[3]);
+    driftChargeLevel = driftCharge + 0.00001f >= kChargeThresholds[3] ? 3 :
+                       (driftCharge + 0.00001f >= kChargeThresholds[2] ? 2 :
+                        (driftCharge + 0.00001f >= kChargeThresholds[1] ? 1 : 0));
+    return true;
+}
+
 float Car::boostEnvelopeAmount() const {
     if (boostLevel<=0 || boostLevel>3 || !(boostRemaining>0)) return 0;
     const BoostProfile profile=currentBoost(*this);

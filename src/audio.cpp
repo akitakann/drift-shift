@@ -101,6 +101,11 @@ void DriftAudio::bank(float quality) {
     bankSerial_.fetch_add(1, std::memory_order_release);
 }
 
+void DriftAudio::pickup(int step) {
+    pickupStep_.store(std::max(0, std::min(12, step)), std::memory_order_relaxed);
+    pickupSerial_.fetch_add(1, std::memory_order_release);
+}
+
 void DriftAudio::setDriftState(int chargeLevel, int boostLevel, unsigned boostSerial, float boostRemaining) {
     chargeLevel_.store(std::max(0, std::min(3, chargeLevel)), std::memory_order_relaxed);
     boostLevel_.store(std::max(0, std::min(3, boostLevel)), std::memory_order_relaxed);
@@ -195,6 +200,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
         engineLevel_ = driftLevel_ = gate_ = 0;
         noiseLow_ = noiseHigh_ = crashEnvelope_ = 0;
         bankTime_ = -1;
+        pickupTime_ = -1;
         cueQuality_ = 0;
         seenChargeLevel_ = chargeLevel_.load(std::memory_order_relaxed);
         seenBoostSerial_ = boostSerial_.load(std::memory_order_acquire);
@@ -297,6 +303,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
         chargeCueTime_ = boostCueTime_ = -1;
         boostTail_ = boostVoiceGate_ = 0;
         bankTime_ = -1;
+        pickupTime_ = -1;
     }
     const float chargeAirDuration = kChargeAirDurations[chargeCueLevel_];
     const float chargeAirLowCoeff = 1 - std::exp(-static_cast<float>(dt) * float(kTau) * (130 + chargeCueLevel_ * 50));
@@ -322,6 +329,15 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     const float targetDrift = speed > 5 ? drift : 0;
     const float impact = impact_.exchange(0, std::memory_order_relaxed);
     crashEnvelope_ = suppressCue ? 0 : std::max(crashEnvelope_, impact);
+    const unsigned pickupSerial = pickupSerial_.load(std::memory_order_acquire);
+    if (pickupSerial != seenPickupSerial_) {
+        seenPickupSerial_ = pickupSerial;
+        pickupTime_ = suppressCue ? -1 : 0;
+        pickupPhase_ = 0;
+        // A major-scale climb: each item in a chain sounds one step higher.
+        static const int scale[] = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21};
+        pickupFreq_ = 987.77f * std::pow(2.0f, scale[pickupStep_.load(std::memory_order_relaxed)] / 12.0f);
+    }
     const unsigned serial = bankSerial_.load(std::memory_order_acquire);
     if (serial != seenBankSerial_) {
         seenBankSerial_ = serial;
@@ -382,6 +398,15 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
             landingCueTime_ += static_cast<float>(dt);
         }
         float cue = 0;
+        if (pickupTime_ >= 0 && pickupTime_ < 0.22f) {
+            // Two quick bright partials, the second a fifth above.
+            const float jump = pickupTime_ < 0.055f ? 1.0f : 1.4983f;
+            const float noteTime = pickupTime_ < 0.055f ? pickupTime_ : pickupTime_ - 0.055f;
+            const float envelope = std::min(noteTime * 400.0f, 1.0f) * std::exp(-noteTime * 22.0f);
+            pickupPhase_ = advance(pickupPhase_, pickupFreq_ * jump, dt);
+            cue += (std::sin(pickupPhase_ * kTau) + 0.25f * std::sin(pickupPhase_ * 2 * kTau)) * envelope * 0.07f;
+            pickupTime_ += static_cast<float>(dt);
+        }
         if (bankTime_ >= 0 && bankTime_ < 0.44f) {
             // Three rising notes confirm a clean exit without covering the tires.
             const int note = std::min(2, static_cast<int>(bankTime_ / 0.12f));
@@ -389,7 +414,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
             const float noteTime = bankTime_ - note * 0.12f;
             const float envelope = std::min(noteTime * 180.0f, 1.0f) * std::exp(-noteTime * 15.0f);
             cuePhase_ = advance(cuePhase_, notes[note] * (1.0f + cueQuality_ * 0.04f), dt);
-            cue = std::sin(cuePhase_ * kTau) * envelope * 0.085f;
+            cue += std::sin(cuePhase_ * kTau) * envelope * 0.085f;
             bankTime_ += static_cast<float>(dt);
         }
         // Each readiness step is one short pressure puff, with no note or

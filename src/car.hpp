@@ -94,6 +94,7 @@ struct Car {
     void rescaleWorld(float ratio, const Track& track);
     TrackPose querySupport(const Track& track, float worldX, float worldZ) const;
     float boostEnvelopeAmount() const;
+    bool addCharge(float amount); // Item pickup: advances a live drift charge. True if applied.
     void update(float dt, const DriveInput& input, const Track& track);
 
     void stepGrip(float dt);

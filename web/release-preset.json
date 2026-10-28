@@ -38,7 +38,7 @@
     "cameraSteerLookMax": 8,
     "cameraTravelWeight": 0.8,
     "chargeFovPeak": 3,
-    "chargeRateScale": 1,
+    "chargeRateScale": 0.6,
     "chargeShakeScale": 2,
     "driftSteerRate": 1.8,
     "driftSteerResponse": 0.5,
