@@ -19,7 +19,6 @@ public:
     void update(float speed, float throttle, float drift, float impact, bool paused, float driveSpeed = -1, float acceleration = 0);
     void setDriftState(int chargeLevel, int boostLevel, unsigned boostSerial, float boostRemaining);
     void bank(float quality);
-    void pickup(int step); // Item chime; step raises the pitch through a chain.
     void setMuted(bool muted);
     void setGain(float gain);
     void setLayerGains(float engine, float tire);
@@ -47,8 +46,6 @@ private:
     std::atomic<float> impact_{0};
     std::atomic<float> bankQuality_{0};
     std::atomic<unsigned> bankSerial_{0};
-    std::atomic<unsigned> pickupSerial_{0};
-    std::atomic<int> pickupStep_{0};
     std::atomic<bool> paused_{false};
     std::atomic<bool> muted_{false};
     std::atomic<float> gain_{1};
@@ -94,9 +91,6 @@ private:
     float bankTime_ = -1;
     float cueQuality_ = 0;
     unsigned seenBankSerial_ = 0;
-    unsigned seenPickupSerial_ = 0;
-    float pickupTime_ = -1, pickupFreq_ = 880;
-    double pickupPhase_ = 0;
     int seenChargeLevel_ = 0;
     unsigned seenBoostSerial_ = 0;
     bool boostSerialPrimed_ = false;

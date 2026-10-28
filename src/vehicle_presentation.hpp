@@ -21,7 +21,6 @@ struct VehiclePresentation {
         observedBoostSerial_ = 0;
         observedLandingSerial_ = 0;
         brakeHeld_ = false;
-        wasEntry_ = false;
         brakeCooldown_ = 0;
         clearBounce();
         clearLanding();
@@ -107,14 +106,8 @@ struct VehiclePresentation {
             car.speed > 0.5f && car.grounded && car.onAsphalt && !car.driftHeld && car.impact <= 0.05f;
         const bool brakeOnset = braking && !brakeHeld_;
         brakeHeld_ = braking;
-        const bool entry = car.driftPhase == DriftPhase::Entry;
-        const bool entryOnset = entry && !wasEntry_;
-        wasEntry_ = entry;
         if (newBoost && validBoost) {
             kickBounce(1.0f, settings);
-        } else if (entryOnset && car.grounded) {
-            // Throwing the car into a slide unloads it for a moment.
-            kickBounce(0.7f, settings);
         } else if (car.grounded && brakeOnset && brakeCooldown_ <= 0 && previousAbsSpeed > 0.5f &&
                    speedAcceleration < -0.5 && forwardAcceleration < -0.5) {
             // Both a real brake edge and loss of speed are required. A changing
@@ -134,12 +127,8 @@ struct VehiclePresentation {
         // full pitch at 18m/s^2. Small deadbands remove numeric/low-speed chatter.
         // Positive roll lifts the car's right side in carModelMatrix, so a right
         // turn leans the body left, towards the outside of the corner.
-        // A held slide also leans out by its angle, so the body stays loaded
-        // even when the player straightens the line mid-drift.
-        const float slideLean = car.drifting && car.driftHoldActive && car.onAsphalt ?
-            clampf(float(std::sin(car.slipAngle)) / 0.766f, -1, 1) * 0.7f : 0;
         const float rollTarget = !car.grounded || std::fabs(car.speed) < 0.25f ? 0 :
-            maxRoll * clampf(signedLoad(rightAcceleration, 12.0, 0.10) + slideLean, -1, 1);
+            maxRoll * signedLoad(rightAcceleration, 12.0, 0.10);
         const float pitchTarget = car.grounded ? maxPitch * signedLoad(forwardAcceleration, 18.0, 0.20) : 0;
         roll = settle(roll, rollTarget, dt, settings.bodyResponseTime, settings.bodyRecoveryTime);
         pitch = settle(pitch, pitchTarget, dt, settings.bodyResponseTime, settings.bodyRecoveryTime);
@@ -154,7 +143,6 @@ private:
     unsigned observedBoostSerial_ = 0;
     unsigned observedLandingSerial_ = 0;
     bool brakeHeld_ = false;
-    bool wasEntry_ = false;
     float brakeCooldown_ = 0;
     float heaveVelocity_ = 0;
     float bounceAge_ = -1;

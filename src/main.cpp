@@ -6,8 +6,6 @@
 #include "tuning.hpp"
 #include "presentation.hpp"
 #include "vehicle_presentation.hpp"
-#include "effects.hpp"
-#include "items.hpp"
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_mixer.h>
@@ -99,10 +97,7 @@ struct App {
     Renderer renderer;
     Track track;
     Car car;
-    GpuMesh course,body,wheel,shadow,tireMesh,smokeMesh,boostJet,fxMesh;
-    DriftEffects fx;
-    ChargeItems items;
-    GpuMesh itemSolid,itemGlow;
+    GpuMesh course,body,wheel,shadow,tireMesh,smokeMesh,boostJet;
     GpuMesh chargeWheel[3],chargeHalo[3];
     DriftAudio audio;
     TrialSession trial;
@@ -375,7 +370,6 @@ void applyStageScale(App& app,bool preservePose) {
     const float ratio=app.settings.stageScale/app.stageScale;
     const Vec3 previous{app.car.x,app.car.y,app.car.z};
     app.track.scaleBy(ratio);
-    app.items.build(app.track);
     app.stageScale=app.settings.stageScale;
     app.renderer.updateMesh(app.course,app.track.visual);
     if(preservePose) {
@@ -387,7 +381,7 @@ void applyStageScale(App& app,bool preservePose) {
         app.camera.eye=app.camera.eye+shift;app.camera.look=app.camera.look+shift;
         app.vehicle.rebaseVelocity(app.car);
     }
-    app.tireMarks.clear();app.smoke.clear();app.tiresReady=false;app.smokeAccumulator=0;app.fx.reset();
+    app.tireMarks.clear();app.smoke.clear();app.tiresReady=false;app.smokeAccumulator=0;
 }
 
 bool applyLiveTuning(App& app) {
@@ -458,7 +452,6 @@ void resetTrial(App& app,bool replay=false) {
     }
     applyStageScale(app,false);
     app.car.reset(app.track);
-    app.items.reset();
     app.car.speed=app.freeDriving()?0:TrialCourse::entrySpeedKmh/3.6f;
     app.car.driftModel=replay?app.recordingModel:app.selectedModel;
     app.car.applyTuning(app.settings);
@@ -466,7 +459,7 @@ void resetTrial(App& app,bool replay=false) {
     app.audio.reset();
     app.camera.ready=false;
     app.vehicle.reset();
-    app.tireMarks.clear(); app.smoke.clear(); app.tiresReady=false; app.fx.reset();
+    app.tireMarks.clear(); app.smoke.clear(); app.tiresReady=false;
     app.smokeAccumulator=0; app.currentRecording.clear();
     app.replay=replay; app.replayFrame=0; app.frameNumber=0;
     app.recordingTruncated=false;
@@ -671,16 +664,11 @@ void publishState(App& app,bool samples=false) {
 #endif
 }
 
-Mat4 bodyMatrix(const App& app) {
-    return mul(translation(0,0.55f+app.vehicle.heave+app.vehicle.landingCompression,0),
-               mul(carModelMatrix(app.car,app.car.terrainPitch+app.vehicle.pitch,app.car.terrainRoll+app.vehicle.roll),translation(0,-0.55f,0)));
-}
-
 void tickEffects(App& app,float dt) {
     for(auto& mark:app.tireMarks) mark.age+=dt;
     while(!app.tireMarks.empty() && (app.tireMarks.front().age>12 || app.tireMarks.size()>3200)) app.tireMarks.pop_front();
     for(auto& puff:app.smoke) {puff.age+=dt; puff.position.y+=dt*0.55f;}
-    app.smoke.erase(std::remove_if(app.smoke.begin(),app.smoke.end(),[](const Smoke& p){return p.age>=0.85f;}),app.smoke.end());
+    app.smoke.erase(std::remove_if(app.smoke.begin(),app.smoke.end(),[](const Smoke& p){return p.age>=0.6f;}),app.smoke.end());
     if(!app.car.grounded) {app.tiresReady=false;app.smokeAccumulator=0;return;}
     float strength=slipFeedback(app.car.speed,app.car.slipAngle,app.car.onAsphalt);
     const bool marking=strength>0.02f;
@@ -735,10 +723,10 @@ void drawSmoke(App& app) {
     std::sort(order.begin(),order.end(),[&](const Smoke* a,const Smoke* b){return dot(a->position-app.camera.eye,a->position-app.camera.eye)>dot(b->position-app.camera.eye,b->position-app.camera.eye);});
     Vec3 right{std::cos(app.camera.heading),0,-std::sin(app.camera.heading)};
     for(const auto* puff:order) {
-        float life=puff->age/0.85f;
-        float radius=0.25f+1.1f*life;
+        float life=puff->age/0.6f;
+        float radius=0.20f+0.65f*life;
         Mat4 model=basis(puff->position,right*radius,{0,radius,0},{0,0,1});
-        float opacity=0.17f*puff->strength*(1-life)*(1-life*0.3f);
+        float opacity=0.15f*puff->strength*(1-life);
         app.renderer.drawSmoke(app.smokeMesh,model,opacity);
     }
 }
@@ -783,25 +771,6 @@ void drawSpeedCues(App& app) {
         const float alpha=(0.11f*amount+0.10f*app.car.boostEnvelopeAmount())*envelope*app.settings.speedCueScale;
         h.drawLine(px-dx/length*streak,py-dy/length*streak,px,py,1.1f*u,0.87f,0.94f,1,clampf(alpha,0,0.35f));
     }
-}
-
-void drawItems(App& app,Vec3 eye) {
-    CpuMesh solid,glow;
-    app.items.buildMeshes(solid,glow,eye);
-    app.renderer.updateMesh(app.itemSolid,solid);
-    app.renderer.updateMesh(app.itemGlow,glow);
-    app.renderer.draw(app.itemSolid,Mat4{});
-    app.renderer.drawGlow(app.itemGlow,Mat4{},1);
-}
-
-void drawDriftEffects(App& app,Vec3 eye) {
-    app.fx.forEachFlash([&](int level,const Mat4& model,float opacity){
-        app.renderer.drawGlow(app.chargeHalo[std::clamp(level,1,3)-1],model,opacity,true);
-    });
-    CpuMesh glow;
-    app.fx.buildGlow(glow,eye);
-    app.renderer.updateMesh(app.fxMesh,glow);
-    app.renderer.drawGlow(app.fxMesh,Mat4{},1);
 }
 
 void drawGroundShadow(App& app) {
@@ -1000,11 +969,6 @@ void frame(void* userdata) {
             if(app.freeDriving()) app.trial.tickPractice(app.car,drive,float(kFixedStepSec));
             else app.trial.tick(app.car,drive,float(kFixedStepSec));
             tickEffects(app,float(kFixedStepSec));
-            for(const auto& pickup:app.items.update(float(kFixedStepSec),app.car)) {
-                app.fx.pickupBurst(pickup.position,pickup.level,pickup.charged);
-                app.audio.pickup(pickup.step);
-            }
-            app.fx.tick(float(kFixedStepSec),app.car,bodyMatrix(app),app.camera.eye);
             ++app.frameNumber;
             app.accumulator-=kFixedStepSec;
             if((!app.freeDriving() && app.trial.metrics.finished && app.car.boostRemaining<=0) ||
@@ -1031,14 +995,11 @@ void frame(void* userdata) {
     app.renderer.clearFrame(blur); app.renderer.drawSky();
     float fov=app.camera.fovDegrees/kDegrees;
     Mat4 proj=perspective(fov,float(w)/float(std::max(1,h)),0.15f,4000);
-    const Vec3 shake=app.paused?Vec3{}:app.fx.shakeOffset();
-    const Vec3 eye=app.camera.eye+shake,look=app.camera.look+shake*0.35f;
-    app.renderer.beginWorld(mul(proj,lookAt(eye,look,{0,1,0})),eye);
+    app.renderer.beginWorld(mul(proj,lookAt(app.camera.eye,app.camera.look,{0,1,0})),app.camera.eye);
     app.renderer.draw(app.course,Mat4{}); drawEffects(app);
     drawGroundShadow(app);
-    drawItems(app,eye);
     Mat4 model=mul(translation(0,app.car.grounded?app.car.groundHeight-app.car.y:0,0),carModelMatrix(app.car,app.car.terrainPitch,app.car.terrainRoll));
-    const Mat4 bodyModel=bodyMatrix(app);
+    const Mat4 bodyModel=mul(translation(0,0.55f+app.vehicle.heave+app.vehicle.landingCompression,0),mul(carModelMatrix(app.car,app.car.terrainPitch+app.vehicle.pitch,app.car.terrainRoll+app.vehicle.roll),translation(0,-0.55f,0)));
     app.renderer.draw(app.body,bodyModel);
     for(int axle=0;axle<2;++axle) for(int side=-1;side<=1;side+=2) {
         Mat4 wheel=mul(translation(side*0.82f,0.34f,axle==0?1.42f:-1.38f),mul(rotationY(axle==0?app.car.steerAngle:0),rotationX(app.car.wheelSpin)));
@@ -1054,7 +1015,7 @@ void frame(void* userdata) {
             app.renderer.drawGlow(app.chargeHalo[level-1],basis(position,right,{0,0.58f,0},{0,0,1}),0.22f,true);
         }
     }
-    drawBoostJets(app,bodyModel); drawSmoke(app); drawDriftEffects(app,eye); app.renderer.finishWorld(); drawHud(app); SDL_GL_SwapWindow(app.window);
+    drawBoostJets(app,bodyModel); drawSmoke(app); app.renderer.finishWorld(); drawHud(app); SDL_GL_SwapWindow(app.window);
     app.stateTime+=float(elapsed);
     if(tuningApplied||app.stateTime>=0.1f) {publishState(app);app.stateTime=0;}
 }
@@ -1208,7 +1169,6 @@ int main(int argc,char** argv) {
     if(audioOk) audioOk=app.audio.init();
     if(!audioOk) SDL_Log("Audio unavailable: %s",Mix_GetError());
     app.course=app.renderer.upload(app.track.visual);
-    app.items.build(app.track);
     CpuMesh body,wheel,shadow,smoke,jet;
     buildCarBody(body);buildCarWheel(wheel);buildCarShadow(shadow);
     smoke.addQuad({-1,-1,0},{1,-1,0},{1,1,0},{-1,1,0},{0,0,-1},{0.72f,0.74f,0.76f});
