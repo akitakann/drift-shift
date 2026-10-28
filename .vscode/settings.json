@@ -1,0 +1,6 @@
+{
+  // CMake Tools に IntelliSense 設定を任せず、
+  // .vscode/c_cpp_properties.json（Emscripten 用）を使う
+  "C_Cpp.default.configurationProvider": "",
+  "C_Cpp.default.configuration": "Emscripten"
+}

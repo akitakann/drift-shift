@@ -1,0 +1,35 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Chrome で racegame をデバッグ",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8080/build/racegame.html",
+      "webRoot": "${workspaceFolder}",
+      "browserLaunchLocation": "ui"
+    },
+    {
+      "name": "Linux 版をデバッグ",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-native/racegame",
+      "args": [],
+      "cwd": "${workspaceFolder}/build-native",
+      "environment": [
+        { "name": "DISPLAY", "value": ":1" },
+        { "name": "SDL_AUDIODRIVER", "value": "dummy" }
+      ],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "setupCommands": [
+        {
+          "description": "変数の中身を見やすく表示する",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ],
+      "preLaunchTask": "Linux版をビルド（Debug）"
+    }
+  ]
+}

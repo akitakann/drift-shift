@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ブラウザ版をビルド",
+      "type": "shell",
+      "command": "emcmake cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
+      "detail": "Emscripten でビルドする。確認は http://localhost:8080/build/racegame.html",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Linux版をビルド（Debug）",
+      "type": "shell",
+      "command": "cmake -B build-native -DCMAKE_BUILD_TYPE=Debug && cmake --build build-native",
+      "detail": "gdb でデバッグできる Linux 版を作る。デバッグ開始時は自動で実行される",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "Linux版を実行",
+      "type": "shell",
+      "command": "./build-native/racegame",
+      "detail": "ゲーム画面はブラウザで http://localhost:6080 を開いて確認する",
+      "problemMatcher": []
+    },
+    {
+      "label": "Linux版を配布パッケージにする",
+      "type": "shell",
+      "command": "cmake -B build-package -DCMAKE_BUILD_TYPE=Release && cmake --build build-package && cd build-package && cpack",
+      "detail": "Release ビルドして racegame-linux.tar.gz を作る",
+      "group": "build",
+      "problemMatcher": ["$gcc"]
+    }
+  ]
+}

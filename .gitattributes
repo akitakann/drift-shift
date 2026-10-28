@@ -1,0 +1,28 @@
+# デフォルト: テキストは LF で管理、checkout 時に OS 用に変換
+* text=auto
+
+# ソースコード・設定ファイルは常に LF
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+CMakeLists.txt text eol=lf
+Dockerfile text eol=lf
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+# バイナリは変換しない
+*.png binary
+*.wav binary
+*.ogg binary
+*.wasm binary
+*.data binary
+*.zip binary
