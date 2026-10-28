@@ -807,6 +807,58 @@ void testSpringWeightShift() {
     }
 }
 
+void testElasticPitch() {
+    // Braking can be set to throw the tail up harder than throttle lifts the nose.
+    FeelSettings settings;
+    settings.bodyPitchMax = 10;
+    settings.bodyThrottlePitch = 2;
+    settings.bodyBrakePitch = 6;
+    VehiclePresentation accelerating, braking;
+    Car fast = moving(10), slow = moving(40);
+    accelerating.update(kDt, fast, settings);
+    braking.update(kDt, slow, settings);
+    for (int frame = 0; frame < 90; ++frame) {
+        fast.speed += 12 * kDt;
+        slow.speed -= 12 * kDt;
+        accelerating.update(kDt, fast, settings);
+        braking.update(kDt, slow, settings);
+    }
+    check(accelerating.pitch > 0 && braking.pitch < 0 && near(-braking.pitch / accelerating.pitch, 3, 0.05f),
+          "throttle and brake each pitch by their own configured amount");
+
+    // A boost rears the nose up for as long as its push lasts; its fading speed
+    // is not a brake, so the nose comes back down without a dive.
+    auto boostPeak = [&](int level, float& lowestAfter) {
+        FeelSettings tuned;
+        tuned.bodyPitchMax = 10;
+        tuned.bodyBoostPitch = 6;
+        VehiclePresentation view;
+        Car car = moving(40);
+        view.update(kDt, car, tuned);
+        car.boostLevel = level;
+        car.boostRemaining = 1.1f; // Default attack 0.1s, hold 0.2s, return 0.8s.
+        float peak = 0;
+        lowestAfter = 0;
+        for (int frame = 0; frame < 150; ++frame) {
+            car.boostRemaining = std::fmax(car.boostRemaining - kDt, 0.0f);
+            if (car.boostRemaining <= 0) car.boostLevel = 0;
+            const float bonus = 18 * car.boostEnvelopeAmount();
+            car.speed = 40 + bonus;
+            car.boostSpeedBonus = bonus;
+            view.update(kDt, car, tuned);
+            peak = std::fmax(peak, view.pitch);
+            if (car.boostRemaining <= 0) lowestAfter = std::fmin(lowestAfter, view.pitch);
+            check(view.pitch <= radians(tuned.bodyPitchMax) + 0.000001f, "a boost's nose lift is held by the pitch limit");
+        }
+        return peak;
+    };
+    float afterTop = 0, afterLow = 0;
+    const float top = boostPeak(3, afterTop), low = boostPeak(1, afterLow);
+    check(top > radians(6) * 0.8f && top < radians(10), "a top-tier boost rears the nose up by about its configured amount");
+    check(low < top * 0.85f && low > top * 0.55f, "a first-tier boost lifts the nose visibly less than a top-tier one");
+    check(afterTop > -0.4f * top, "the nose settles back after a boost without diving as if braking");
+}
+
 void testPhysicalIndependence() {
     Track track;
     track.makePracticeArea();
@@ -837,6 +889,7 @@ int main() {
     testStopAndMalformedSamples();
     testPausedSpeedEditRebase();
     testSpringWeightShift();
+    testElasticPitch();
     testBoostHeaveEvents();
     testZeroBoostStrengthAndBrakePriority();
     testBrakeHeaveEvents();

@@ -77,6 +77,11 @@ const RuntimeTuningField kRuntimeTuningFields[] = {
     {"bodyLeanHz", &FeelSettings::bodyLeanHz},
     {"bodyLeanDamping", &FeelSettings::bodyLeanDamping},
     {"bodyFlickScale", &FeelSettings::bodyFlickScale},
+    {"bodyThrottlePitch", &FeelSettings::bodyThrottlePitch},
+    {"bodyBrakePitch", &FeelSettings::bodyBrakePitch},
+    {"bodyBoostPitch", &FeelSettings::bodyBoostPitch},
+    {"bodyPitchHz", &FeelSettings::bodyPitchHz},
+    {"bodyPitchDamping", &FeelSettings::bodyPitchDamping},
     {"bodyBounceHeight", &FeelSettings::bodyBounceHeight},
     {"bodyBounceReturn", &FeelSettings::bodyBounceReturn},
     {"boostBlurStrength", &FeelSettings::boostBlurStrength},
@@ -669,11 +674,17 @@ void publishState(App& app,bool samples=false) {
 
 // The sprung body as drawn: it leans about a low axis near its floor, like a
 // car settling on its springs, so the roof travels while the sills stay put.
+// Fore-aft tilt turns about the axle that stays down: a boost rears the nose
+// up off the rear wheels, and braking throws the tail up off the front ones.
 Mat4 bodyMatrix(const App& app) {
-    constexpr float kLeanPivot=0.35f;
-    return mul(translation(0,kLeanPivot+app.vehicle.heave+app.vehicle.landingCompression,0),
-               mul(carModelMatrix(app.car,app.car.terrainPitch+app.vehicle.pitch,app.car.terrainRoll+app.vehicle.roll),
-                   translation(0,-kLeanPivot,0)));
+    const Car& car=app.car;
+    const float pitch=app.vehicle.pitch;
+    const Vec3 pivot{0,0.35f,pitch>0?-1.38f:(pitch<0?1.42f:0.0f)};
+    const Mat4 rest=carModelMatrix(car,car.terrainPitch,car.terrainRoll);
+    const Mat4 lean=carModelMatrix(car,car.terrainPitch+pitch,car.terrainRoll+app.vehicle.roll);
+    const Vec3 held=transformPoint(rest,pivot)-transformPoint(lean,pivot);
+    const float lift=app.vehicle.heave+app.vehicle.landingCompression;
+    return mul(translation(held.x,held.y+lift,held.z),lean);
 }
 
 void tickEffects(App& app,float dt) {
@@ -1015,13 +1026,19 @@ void frame(void* userdata) {
     const Mat4 bodyModel=bodyMatrix(app);
     app.renderer.draw(app.body,bodyModel);
     for(int axle=0;axle<2;++axle) for(int side=-1;side<=1;side+=2) {
-        Mat4 wheel=mul(translation(side*0.82f,0.34f,axle==0?1.42f:-1.38f),mul(rotationY(axle==0?app.car.steerAngle:0),rotationX(app.car.wheelSpin)));
-        app.renderer.draw(app.wheel,mul(model,wheel));
+        const Vec3 hub{side*0.82f,0.34f,axle==0?1.42f:-1.38f};
+        Mat4 wheel=mul(translation(hub.x,hub.y,hub.z),mul(rotationY(axle==0?app.car.steerAngle:0),rotationX(app.car.wheelSpin)));
+        // Suspension reach: the body may rise this far over a wheel while the
+        // tyre stays on the road. Beyond it the wheel is lifted off with the body.
+        constexpr float kSuspensionReach=0.12f;
+        const float wheelLift=std::max(0.0f,transformPoint(bodyModel,hub).y-transformPoint(model,hub).y-kSuspensionReach);
+        wheel=mul(translation(0,wheelLift,0),mul(model,wheel));
+        app.renderer.draw(app.wheel,wheel);
         int level=app.car.boostRemaining>0?0:app.car.driftChargeLevel;
         if(level>0 && level<=3) {
             float pulse=0.75f+0.1f*std::sin(app.frameNumber*0.07f);
-            app.renderer.drawGlow(app.chargeWheel[level-1],mul(model,wheel),pulse);
-            Vec3 position=Vec3{app.car.x,app.car.y+0.35f,app.car.z}+
+            app.renderer.drawGlow(app.chargeWheel[level-1],wheel,pulse);
+            Vec3 position=Vec3{app.car.x,app.car.y+0.35f+wheelLift,app.car.z}+
                 Vec3{std::cos(app.car.yaw),0,-std::sin(app.car.yaw)}*(side*0.85f)+
                 Vec3{std::sin(app.car.yaw),0,std::cos(app.car.yaw)}*(axle==0?1.42f:-1.38f);
             Vec3 right{std::cos(app.camera.heading)*0.58f,0,-std::sin(app.camera.heading)*0.58f};

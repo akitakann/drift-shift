@@ -68,6 +68,13 @@ inline Mat4 mul(const Mat4& a, const Mat4& b) {
     return r;
 }
 
+// Applies a column-major transform to a point.
+inline Vec3 transformPoint(const Mat4& m, Vec3 p) {
+    return {m.m[0] * p.x + m.m[4] * p.y + m.m[8] * p.z + m.m[12],
+            m.m[1] * p.x + m.m[5] * p.y + m.m[9] * p.z + m.m[13],
+            m.m[2] * p.x + m.m[6] * p.y + m.m[10] * p.z + m.m[14]};
+}
+
 inline Mat4 translation(float x, float y, float z) {
     Mat4 r;
     r.m[12] = x;

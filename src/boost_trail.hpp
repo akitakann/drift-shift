@@ -37,7 +37,7 @@ struct BoostTrail {
                 if (!side.empty()) side.back().breakAfter = true;
                 continue;
             }
-            const Vec3 jet = transform(body, {i == 0 ? -0.53f : 0.53f, 0.40f, -2.16f});
+            const Vec3 jet = transformPoint(body, {i == 0 ? -0.53f : 0.53f, 0.40f, -2.16f});
             side.push_back({jet, levelColor(car.boostLevel) * (0.35f + 0.65f * amount), 0, false});
             if (side.size() > 120) side.pop_front();
         }
@@ -71,10 +71,5 @@ private:
     static float fade(const Point& point) {
         const float t = point.age / kLife;
         return t >= 1 ? 0 : (1 - t) * (1 - t);
-    }
-    static Vec3 transform(const Mat4& m, Vec3 p) {
-        return {m.m[0] * p.x + m.m[4] * p.y + m.m[8] * p.z + m.m[12],
-                m.m[1] * p.x + m.m[5] * p.y + m.m[9] * p.z + m.m[13],
-                m.m[2] * p.x + m.m[6] * p.y + m.m[10] * p.z + m.m[14]};
     }
 };

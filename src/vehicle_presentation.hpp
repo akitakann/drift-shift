@@ -109,12 +109,11 @@ struct VehiclePresentation {
         const float midTravel = previousTravelYaw_ + 0.5f * pathTurn;
         const double cornerAcceleration = 0.5 * (double(car.speed) + double(previousSpeed_)) *
             (double(pathTurn) / double(dt)) * std::cos(double(wrapPi(midYaw - midTravel)));
-        // Fore-aft load follows the driven speed and a boost's rise, but not the
-        // boost fading away, which would read as an unasked-for brake dive.
+        // Fore-aft load follows the driven speed only. A boost's own push is
+        // shown separately below, and its fading is not a brake.
         const float bonus = boostBonus(car);
         const double driveAcceleration =
-            ((double(std::fabs(car.speed)) - bonus) - (double(previousAbsSpeed) - previousBoostBonus_)) / double(dt) +
-            std::fmax((double(bonus) - previousBoostBonus_) / double(dt), 0.0);
+            ((double(std::fabs(car.speed)) - bonus) - (double(previousAbsSpeed) - previousBoostBonus_)) / double(dt);
         previousVelocity_ = velocity;
         previousYaw_ = bodyYaw;
         previousTravelYaw_ = travelYaw;
@@ -157,15 +156,23 @@ struct VehiclePresentation {
             kSlideLean * clampf(std::sin(car.slipAngle) / 0.766f, -1, 1) : 0;
         const float rollTarget = !car.grounded || std::fabs(car.speed) < 0.25f ? 0 :
             maxRoll * kTargetShare * std::tanh(softLoad(cornerAcceleration, 10.0, 0.10) + slide);
-        // Pitch follows the change of speed (throttle, brake, boost), not the
-        // sideways component of a slide, so a steady drift does not sit nose-up.
-        const float pitchTarget = car.grounded ?
-            maxPitch * kTargetShare * std::tanh(softLoad(driveAcceleration, 12.0, 0.20)) : 0;
+        // Pitch is the elastic, exaggerated axis. Throttle lifts the nose,
+        // braking throws the tail up, and a boost rears the nose up for as long
+        // as its push lasts. The sideways part of a slide never pitches the car.
+        float pitchTarget = 0;
+        if (car.grounded) {
+            const float load = std::tanh(softLoad(driveAcceleration, 12.0, 0.20));
+            pitchTarget = radians * (load >= 0 ? settings.bodyThrottlePitch : settings.bodyBrakePitch) * load;
+            const bool boosting = settings.boostSpeedScale > 0 && car.boostLevel > 0 && car.boostLevel <= 3 &&
+                std::isfinite(car.boostRemaining) && car.boostRemaining > 0 && car.speed > 0.5f;
+            if (boosting)
+                pitchTarget += radians * settings.bodyBoostPitch * kBoostTier[car.boostLevel] * car.boostEnvelopeAmount();
+        }
 
         // Weight is thrown outward as the slide starts, and back across as it
         // is released. Both are velocity kicks, so the spring shapes them.
         const bool entry = car.driftPhase == DriftPhase::Entry;
-        const float unit = unitPeak(settings);
+        const float unit = unitPeak(settings.bodyLeanHz, settings.bodyLeanDamping);
         if (entry && !wasEntry_ && car.grounded && car.speed > 5 && car.driftDirection != 0)
             rollVelocity_ += car.driftDirection * kEntryFlick * settings.bodyFlickScale * maxRoll / unit;
         if (wasHolding_ && !car.driftHoldActive && car.releaseEaseActive && car.grounded)
@@ -173,8 +180,8 @@ struct VehiclePresentation {
         wasEntry_ = entry;
         wasHolding_ = car.driftHoldActive;
 
-        spring(roll, rollVelocity_, rollTarget, dt, settings);
-        spring(pitch, pitchVelocity_, pitchTarget, dt, settings);
+        spring(roll, rollVelocity_, rollTarget, dt, settings.bodyLeanHz, settings.bodyLeanDamping);
+        spring(pitch, pitchVelocity_, pitchTarget, dt, settings.bodyPitchHz, settings.bodyPitchDamping);
         bindLean(roll, rollVelocity_, maxRoll);
         bindLean(pitch, pitchVelocity_, maxPitch);
     }
@@ -193,6 +200,7 @@ private:
     static constexpr float kSlideLean = 0.35f;   // Tyre-scrub lean of a held slide, in load units.
     static constexpr float kEntryFlick = 0.35f;  // Entry kick's own peak, share of the roll limit.
     static constexpr float kReleaseFlick = 0.6f; // Release kick's own peak, share of the current roll.
+    static constexpr float kBoostTier[4] = {0, 0.7f, 0.85f, 1}; // Boost nose lift by tier.
     float heaveVelocity_ = 0;
     float bounceAge_ = -1;
     float bounceReturn_ = 0.45f;
@@ -326,10 +334,10 @@ private:
     }
     // Advances an underdamped spring towards a target held over dt. The step is
     // the exact solution, so 30/60/120Hz and irregular frames give one motion.
-    static void spring(float& value, float& velocity, float target, float dt, const FeelSettings& settings) {
-        const float omega = 6.283185307f * settings.bodyLeanHz;
-        const float decay = settings.bodyLeanDamping * omega;
-        const float frequency = omega * std::sqrt(1 - settings.bodyLeanDamping * settings.bodyLeanDamping);
+    static void spring(float& value, float& velocity, float target, float dt, float hz, float damping) {
+        const float omega = 6.283185307f * hz;
+        const float decay = damping * omega;
+        const float frequency = omega * std::sqrt(1 - damping * damping);
         const float offset = value - target;
         const float attenuation = std::exp(-decay * dt);
         const float cosine = std::cos(frequency * dt), sine = std::sin(frequency * dt);
@@ -339,10 +347,10 @@ private:
         if (target == 0 && std::fabs(value) < 0.000001f && std::fabs(velocity) < 0.00001f) value = velocity = 0;
     }
     // Peak displacement produced by a unit velocity kick from rest.
-    static float unitPeak(const FeelSettings& settings) {
-        const float omega = 6.283185307f * settings.bodyLeanHz;
-        const float decay = settings.bodyLeanDamping * omega;
-        const float frequency = omega * std::sqrt(1 - settings.bodyLeanDamping * settings.bodyLeanDamping);
+    static float unitPeak(float hz, float damping) {
+        const float omega = 6.283185307f * hz;
+        const float decay = damping * omega;
+        const float frequency = omega * std::sqrt(1 - damping * damping);
         const float peakTime = std::atan(frequency / decay) / frequency;
         return std::exp(-decay * peakTime) * std::sin(frequency * peakTime) / frequency;
     }

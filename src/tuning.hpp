@@ -48,7 +48,12 @@ struct FeelSettings {
     float cameraSteerLookAhead = 0.20f;
     float cameraSteerLookMax = 8.0f; // Degrees.
     float bodyRollMax = 4.0f; // Visual suspension only, degrees.
-    float bodyPitchMax = 2.0f;
+    float bodyPitchMax = 3.0f;      // Hard stop for fore-aft tilt, degrees.
+    float bodyThrottlePitch = 2.0f; // Nose lift under full throttle, degrees.
+    float bodyBrakePitch = 2.0f;    // Tail lift under hard braking, degrees.
+    float bodyBoostPitch = 2.0f;    // Nose lift at a top-tier boost's peak, degrees.
+    float bodyPitchHz = 1.8f;       // Fore-aft spring; lower and looser feels more elastic.
+    float bodyPitchDamping = 0.45f;
     float bodyLeanHz = 1.8f;        // Sprung-body roll/pitch frequency; higher feels stiffer.
     float bodyLeanDamping = 0.45f;  // Damping ratio; below 1 the body overshoots once and settles.
     float bodyFlickScale = 1;       // Extra weight shift thrown in at drift entry and release.
@@ -115,7 +120,12 @@ inline FeelSettings sanitizeFeelSettings(FeelSettings settings) {
     FEEL_BOUND(cameraSteerLookAhead, 0, 0.50f);
     FEEL_BOUND(cameraSteerLookMax, 0, 18);
     FEEL_BOUND(bodyRollMax, 0, 10);
-    FEEL_BOUND(bodyPitchMax, 0, 6);
+    FEEL_BOUND(bodyPitchMax, 0, 15);
+    FEEL_BOUND(bodyThrottlePitch, 0, 10);
+    FEEL_BOUND(bodyBrakePitch, 0, 10);
+    FEEL_BOUND(bodyBoostPitch, 0, 12);
+    FEEL_BOUND(bodyPitchHz, 0.8f, 4);
+    FEEL_BOUND(bodyPitchDamping, 0.2f, 0.9f);
     FEEL_BOUND(bodyLeanHz, 0.8f, 4);
     FEEL_BOUND(bodyLeanDamping, 0.2f, 0.9f);
     FEEL_BOUND(bodyFlickScale, 0, 2);
