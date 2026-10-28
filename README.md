@@ -1,6 +1,6 @@
 # DRIFT
 
-[ブラウザで遊ぶ](https://akitakann.github.io/BNS_DRIFT/) · [ソースコード](https://github.com/akitakann/BNS_DRIFT)
+[ブラウザで遊ぶ](https://akitakann.github.io/drift-shift/) · [ソースコード](https://github.com/akitakann/drift-shift)
 
 公開画面はゲームのみです。画面をクリックして開始し、P / Escでメニューを開けます。クレジットは開始・一時停止メニューから確認できます。
 
