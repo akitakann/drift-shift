@@ -28,6 +28,8 @@ constexpr float kAngleCommandRate = 45.0f * 3.14159265f / 180.0f;
 constexpr float kHeldSlowdown = 1.0f;
 constexpr float kHeldSpeedRetention = 0.90f;
 constexpr float kReleaseEaseDuration = 0.15f;
+constexpr float kKickPeak = 7.0f;     // Item push when no charge can be added, m/s (~25 km/h).
+constexpr float kKickAttack = 0.06f, kKickHold = 0.12f, kKickReturn = 0.55f;
 constexpr float kWallKeep = 0.55f;   // Share of the pre-impact speed a wall glance keeps.
 constexpr float kWallAlign = 14.0f;  // Rate at which a nose-in body swings along the wall, 1/s.
 constexpr float kWallMaxAngle = 25.0f * 3.14159265f / 180.0f; // Sharpest nose-in pose kept on contact.
@@ -183,6 +185,8 @@ void Car::reset(const Track& track) {
     boostLevel = 0;
     boostSerial = 0;
     boostSpeedBonus = 0;
+    itemKickTime = -1;
+    itemKickBonus = 0;
     boostTotalDuration = 0;
     boostAttackDuration = boostHoldDuration = boostReturnDuration = 0;
     speed = 0;
@@ -497,6 +501,7 @@ void Car::updateAirborne(float dt, const DriveInput& input, const Track& track) 
         releaseUsesCameraHeading=false;
         driftPhase=DriftPhase::None;driftAngleCommand=0;
     }
+    itemKickTime=-1;itemKickBonus=0; // In flight the push simply stays as momentum.
     const float steer=clampf(input.steer,-1,1);
     const float targetTurn=steer*driftSteerRate*airSteerControl*(speed>=0?1.0f:-1.0f);
     airTurnRate_+=(targetTurn-airTurnRate_)*(1-std::exp(-8*dt));
@@ -597,6 +602,13 @@ void Car::applyTuning(const FeelSettings& rawSettings) {
     boostSpeedReturn = settings.boostSpeedReturn;
 }
 
+void Car::addKick(float scale) {
+    if (speed < 0 || !(scale > 0)) return;
+    itemKickScale = clampf(scale, 0, 1);
+    // Restart the envelope; a fresh push never stacks on top of a running one.
+    itemKickTime = 0;
+}
+
 bool Car::addCharge(float amount) {
     if (!(amount > 0) || !std::isfinite(amount)) return false;
     if (!grounded || !onAsphalt || !drifting || !driftHeld || !driftHoldActive || speed <= kMinDriftSpeed) return false;
@@ -653,11 +665,14 @@ void Car::update(float dt, const DriveInput& input, const Track& track) {
         // 次のドリフトへ持ち越さず、減衰後の上乗せだけを後で足し直す。
         if (boostSpeedBonus > 0 && speed > 0) speed = std::fmax(speed - boostSpeedBonus, 0.0f);
         boostSpeedBonus = 0;
+        if (itemKickBonus > 0 && speed > 0) speed = std::fmax(speed - itemKickBonus, 0.0f);
+        itemKickBonus = 0;
     };
     removeBoostSpeed();
     auto cancelBoost = [&] {
         removeBoostSpeed();
         clearBoostClock(*this);
+        itemKickTime = -1;
     };
     auto cancelReleaseEase = [&] {
         releaseEaseActive = false;
@@ -825,6 +840,19 @@ void Car::update(float dt, const DriveInput& input, const Track& track) {
     if (boostRemaining > 0 && boostLevel > 0 && boostLevel <= 3 && speed > 0) {
         boostSpeedBonus = kBoostPeaks[boostLevel] * boostSpeedScale * boostEnvelopeAmount();
         speed = clampf(speed + boostSpeedBonus, -kMaxReverse, maxSpeed+landingSpeedExcess_+boostSpeedBonus);
+    }
+    if (itemKickTime >= 0 && speed > 0) {
+        // A short, smaller push than any boost: quick rise, brief hold, ease out.
+        itemKickTime += dt;
+        const float total = kKickAttack + kKickHold + kKickReturn;
+        if (itemKickTime >= total) itemKickTime = -1;
+        else {
+            const float amount = itemKickTime < kKickAttack ? smoothBoost(itemKickTime / kKickAttack) :
+                itemKickTime < kKickAttack + kKickHold ? 1.0f :
+                1 - smoothBoost((itemKickTime - kKickAttack - kKickHold) / kKickReturn);
+            itemKickBonus = kKickPeak * itemKickScale * amount;
+            speed += itemKickBonus;
+        }
     }
     wheelSpin += speed / kWheelRadius * dt;
 

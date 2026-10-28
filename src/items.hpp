@@ -85,6 +85,8 @@ struct ChargeItems {
             if (dx * dx + dz * dz > kRadius * kRadius || std::fabs(dy) > 3.0f) continue;
             item.respawn = kRespawn;
             const bool charged = car.addCharge(kChargeAmount);
+            // Every cell pushes; one that also charges pushes about half as hard.
+            car.addKick(charged ? 0.5f : 1.0f);
             out.push_back({item.position, charged, chain_, car.driftChargeLevel});
             chain_ = std::min(chain_ + 1, 12);
             chainTimer_ = 1.6f;

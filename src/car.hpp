@@ -34,7 +34,10 @@ struct Car {
     float driftCharge = 0;   // 路面上で実際に滑ったチャージ時間（秒）
     int driftChargeLevel = 0; // 0..3
     float boostRemaining = 0;
-    float boostSpeedBonus = 0; // speedに含まれる一時的な上乗せ。通常の駆動速度とは分ける
+    float boostSpeedBonus = 0;
+    float itemKickTime = -1; // Elapsed time of an item push; negative when idle.
+    float itemKickBonus = 0; // Push speed currently included in speed, m/s.
+    float itemKickScale = 1; // speedに含まれる一時的な上乗せ。通常の駆動速度とは分ける
     int boostLevel = 0;       // ブースト継続中の段階（0..3）
     unsigned boostSerial = 0; // 有効な解放ごとに一度だけ増える演出用番号
     float boostSpeedScale = 1; // 調整値。resetで保持
@@ -95,6 +98,7 @@ struct Car {
     TrackPose querySupport(const Track& track, float worldX, float worldZ) const;
     float boostEnvelopeAmount() const;
     bool addCharge(float amount); // Item pickup: advances a live drift charge. True if applied.
+    void addKick(float scale = 1); // Item pickup push; scale 1 when no charge is added, smaller with charge.
     void update(float dt, const DriveInput& input, const Track& track);
 
     void stepGrip(float dt);

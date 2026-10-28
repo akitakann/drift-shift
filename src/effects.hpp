@@ -211,7 +211,8 @@ struct DriftEffects {
             spawn(at, v, mix(color, {1, 1, 0.85f}, random(0, 0.5f)), random(0.3f, 0.6f), random(0.07f, 0.13f));
         }
         flashes.push_back({at - Vec3{0, 1.0f, 0}, std::clamp(level, 1, 3), 0, 0.22f, charged ? 3.0f : 1.8f});
-        if (charged) shake = std::fmax(shake, 0.03f);
+        shake = std::fmax(shake, charged ? 0.03f : 0.025f);
+        if (!charged) boostGlow = std::fmax(boostGlow, 0.5f);
     }
 
     // Flat expanding discs: level, model matrix and opacity for drawGlow(radial).
