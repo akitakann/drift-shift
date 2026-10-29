@@ -67,6 +67,8 @@ struct FeelSettings {
     float suspensionTravel = 0.20f;
     float maxLaunchSpeed = 4.5f;
     float airSteerControl = 0.35f;
+    float itemKickKmh = 30;   // Peak push of one dash item, km/h.
+    float momentFxScale = 1;  // Strength of the screen accents at GO, items, sector bests, laps and records.
     float engineRevScale = 1;
     float engineRevReturn = 0.65f;
 };
@@ -139,6 +141,8 @@ inline FeelSettings sanitizeFeelSettings(FeelSettings settings) {
     FEEL_BOUND(suspensionTravel, 0.05f, 0.45f);
     FEEL_BOUND(maxLaunchSpeed, 2, 8);
     FEEL_BOUND(airSteerControl, 0, 0.8f);
+    FEEL_BOUND(itemKickKmh, 0, 60);
+    FEEL_BOUND(momentFxScale, 0, 2);
     FEEL_BOUND(engineRevScale, 0, 2);
     FEEL_BOUND(engineRevReturn, 0.20f, 1.5f);
 #undef FEEL_BOUND

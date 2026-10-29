@@ -54,6 +54,73 @@ bool DriftAudio::init() {
     return true;
 }
 
+void DriftAudio::cue(Cue which, int step) {
+    const unsigned write = cueWrite_.load(std::memory_order_relaxed);
+    if (write - cueRead_.load(std::memory_order_acquire) >= kCueQueue) return;
+    cueQueue_[write % kCueQueue] = {int(which), step};
+    cueWrite_.store(write + 1, std::memory_order_release);
+}
+
+void DriftAudio::addTone(float delay, float length, float hz, float gain, float bright) {
+    for (auto& tone : tones_) {
+        if (tone.active) continue;
+        tone = Tone{delay, 0, length, hz, gain, bright, 0, true};
+        return;
+    }
+}
+
+// Each cue is a few bell-like tones on a C major scale, kept above the engine.
+void DriftAudio::startCue(int type, int step) {
+    static const int scale[] = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21};
+    switch (Cue(type)) {
+    case Cue::CountTick: addTone(0, 0.16f, 659.26f, 0.11f, 0.45f); break;
+    case Cue::CountGo:
+        addTone(0, 0.55f, 1318.5f, 0.11f, 0.45f);
+        addTone(0, 0.55f, 659.26f, 0.06f, 0.2f);
+        break;
+    case Cue::Item: {
+        const float hz = 987.77f * std::pow(2.0f, scale[std::max(0, std::min(12, step))] / 12.0f);
+        addTone(0, 0.11f, hz, 0.06f, 0.5f);
+        addTone(0.05f, 0.16f, hz * 1.4983f, 0.05f, 0.5f);
+        break;
+    }
+    case Cue::SectorBest:
+        addTone(0, 0.22f, 1046.5f, 0.08f, 0.5f);
+        addTone(0.08f, 0.32f, 1568.0f, 0.08f, 0.5f);
+        break;
+    case Cue::SectorSlower: addTone(0, 0.18f, 392.0f, 0.05f, 0.2f); break;
+    case Cue::Lap: {
+        const float notes[] = {523.25f, 659.26f, 783.99f, 1046.5f};
+        for (int i = 0; i < 4; ++i) addTone(0.07f * i, 0.42f, notes[i], 0.07f, 0.45f);
+        break;
+    }
+    case Cue::Record: {
+        const float notes[] = {523.25f, 659.26f, 783.99f, 1046.5f, 1318.5f, 1568.0f};
+        for (int i = 0; i < 6; ++i) addTone(0.07f * i, 0.36f, notes[i], 0.07f, 0.5f);
+        for (float hz : {1046.5f, 1318.5f, 1568.0f}) addTone(0.46f, 1.25f, hz, 0.055f, 0.35f);
+        break;
+    }
+    }
+}
+
+float DriftAudio::renderTones(double dt) {
+    float sum = 0;
+    for (auto& tone : tones_) {
+        if (!tone.active) continue;
+        if (tone.delay > 0) { tone.delay -= float(dt); continue; }
+        const float t = tone.age;
+        // A quick strike, then a bell-like decay that reaches silence at the end.
+        const float envelope = std::min(t / 0.004f, 1.0f) * std::exp(-t * 4.6f / tone.length) *
+                               limit((tone.length - t) / 0.02f, 0, 1);
+        tone.phase = advance(tone.phase, tone.hz, dt);
+        const double p = tone.phase * kTau;
+        sum += float(std::sin(p) + tone.bright * (0.35 * std::sin(2 * p) + 0.15 * std::sin(3 * p))) * envelope * tone.gain;
+        tone.age += float(dt);
+        if (tone.age >= tone.length) tone.active = false;
+    }
+    return sum;
+}
+
 bool DriftAudio::loadLoop(SDL_RWops* source, std::vector<float>& pcm) {
     pcm.clear();
     if (!source) return false;
@@ -212,6 +279,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
         landingCueImpact_ = landingLow_ = 0;
         random_ = 0x8e4d6a39;
         seenBankSerial_ = bankSerial_.load(std::memory_order_acquire);
+        for (auto& tone : tones_) tone.active = false;
     }
     const double dt = 1.0 / sampleRate_;
     const float smooth = 1.0f - std::exp(-static_cast<float>(dt) * 20.0f);
@@ -242,6 +310,17 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     const int boostLevel = boostLevel_.load(std::memory_order_relaxed);
     const float boostRemaining = boostRemaining_.load(std::memory_order_relaxed);
     const bool suppressCue = silent || gain <= 0;
+    {
+        // Drain the jingle queue. Cues raised while silent are dropped, not delayed.
+        const unsigned write = cueWrite_.load(std::memory_order_acquire);
+        unsigned read = cueRead_.load(std::memory_order_relaxed);
+        for (; read != write; ++read) {
+            const CueEvent event = cueQueue_[read % kCueQueue];
+            if (!suppressCue) startCue(event.type, event.step);
+        }
+        cueRead_.store(read, std::memory_order_release);
+        if (suppressCue) for (auto& tone : tones_) tone.active = false;
+    }
     const float landingImpact = pendingLandingImpact_.exchange(0, std::memory_order_acquire);
     if (suppressCue) {
         landingCueTime_ = -1;
@@ -434,7 +513,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
             boostCue = kick * boostVoiceGate_ + air;
             boostCueTime_ += static_cast<float>(dt);
         }
-        const float effects = crash + cue + chargeCue + boostCue + wind + landing;
+        const float effects = crash + cue + chargeCue + boostCue + wind + landing + renderTones(dt);
         for (int channel = 0; channel < channels_; ++channel) {
             // Preserve the recordings' converted channel image. Only fallback
             // tire synthesis needs the original small artificial stereo spread.

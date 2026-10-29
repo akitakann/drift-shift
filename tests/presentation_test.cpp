@@ -963,6 +963,7 @@ void testRuntimeParameters() {
         {&FeelSettings::speedCueScale,0,2},{&FeelSettings::windGain,0,1.5f},
         {&FeelSettings::suspensionTravel,.05f,.45f},{&FeelSettings::maxLaunchSpeed,2,8},
         {&FeelSettings::airSteerControl,0,.8f},{&FeelSettings::engineRevScale,0,2},
+        {&FeelSettings::itemKickKmh,0,60},{&FeelSettings::momentFxScale,0,2},
         {&FeelSettings::engineRevReturn,.2f,1.5f},
     };
     for (const Bound& bound : bounds) {

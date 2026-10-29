@@ -7,6 +7,9 @@
 #include "presentation.hpp"
 #include "vehicle_presentation.hpp"
 #include "boost_trail.hpp"
+#include "time_attack.hpp"
+#include "dash_items.hpp"
+#include "moments.hpp"
 #include <SDL.h>
 #include <SDL_image.h>
 #include <SDL_mixer.h>
@@ -92,6 +95,8 @@ const RuntimeTuningField kRuntimeTuningFields[] = {
     {"suspensionTravel", &FeelSettings::suspensionTravel},
     {"maxLaunchSpeed", &FeelSettings::maxLaunchSpeed},
     {"airSteerControl", &FeelSettings::airSteerControl},
+    {"itemKickKmh", &FeelSettings::itemKickKmh},
+    {"momentFxScale", &FeelSettings::momentFxScale},
     {"engineRevScale", &FeelSettings::engineRevScale},
     {"engineRevReturn", &FeelSettings::engineRevReturn},
 };
@@ -106,6 +111,16 @@ struct App {
     Car car;
     GpuMesh course,body,wheel,shadow,tireMesh,smokeMesh,boostJet,trailMesh;
     BoostTrail boostTrail;
+    TimeAttack attack;
+    DashItems dash;
+    Moments moments;
+    GpuMesh dashSolid,dashGlow;
+    struct Popup { std::string title,detail; Vec3 titleColor{1,1,1},detailColor{1,1,1}; float age=0,life=0; };
+    Popup sectorPopup,lapPopup;
+    float revThrottle=0;       // Engine revs on the grid during the countdown, 0..1.
+    unsigned seenBoostSerial=0;
+    DriftPhase lastDriftPhase=DriftPhase::None;
+    float rumbleCooldown=0;
     GpuMesh chargeWheel[3],chargeHalo[3];
     DriftAudio audio;
     TrialSession trial;
@@ -373,6 +388,50 @@ int requestedTuningRevision() {
 #endif
 }
 
+// Best times live in the browser, per course scale. Other builds keep them for the session.
+void loadBest(App& app) {
+    auto& attack=app.attack;
+    std::fill(attack.bestSectors.begin(),attack.bestSectors.end(),0.0f);
+    attack.bestLap=0;
+#ifdef __EMSCRIPTEN__
+    const int count=int(attack.bestSectors.size());
+    auto read=[&](int index) {
+        return float(EM_ASM_DOUBLE({
+            try {
+                const raw=localStorage.getItem('drift-shift.best');
+                if(!raw) return 0;
+                const best=JSON.parse(raw);
+                if(!best||best.scale!==$0||!Array.isArray(best.sectors)||best.sectors.length!==$1) return 0;
+                const value=$2<0?best.lap:best.sectors[$2];
+                return typeof value==='number'&&isFinite(value)&&value>0?value:0;
+            } catch(e) { return 0; }
+        },double(app.stageScale),count,index));
+    };
+    attack.bestLap=read(-1);
+    for(int i=0;i<count;++i) attack.bestSectors[std::size_t(i)]=read(i);
+#endif
+}
+
+void saveBest(App& app) {
+#ifdef __EMSCRIPTEN__
+    std::ostringstream out; out<<std::setprecision(9);
+    out<<"{\"scale\":"<<app.stageScale<<",\"lap\":"<<app.attack.bestLap<<",\"sectors\":[";
+    for(std::size_t i=0;i<app.attack.bestSectors.size();++i) out<<(i?",":"")<<app.attack.bestSectors[i];
+    out<<"]}";
+    const std::string text=out.str();
+    EM_ASM({try{localStorage.setItem('drift-shift.best',UTF8ToString($0));}catch(e){}},text.c_str());
+#else
+    (void)app;
+#endif
+}
+
+// Splits and dash rows follow the course at its current scale.
+void prepareCourse(App& app) {
+    app.dash.build(app.track);
+    app.attack.configure(app.track);
+    loadBest(app);
+}
+
 void applyStageScale(App& app,bool preservePose) {
     if(std::fabs(app.settings.stageScale-app.stageScale)<0.000001f) return;
     const float ratio=app.settings.stageScale/app.stageScale;
@@ -380,6 +439,7 @@ void applyStageScale(App& app,bool preservePose) {
     app.track.scaleBy(ratio);
     app.stageScale=app.settings.stageScale;
     app.renderer.updateMesh(app.course,app.track.visual);
+    prepareCourse(app);
     if(preservePose) {
         app.car.rescaleWorld(ratio,app.track);
         app.takeoffY*=ratio;app.maxTakeoffRise*=ratio;app.maxAirHeight*=ratio;
@@ -463,6 +523,12 @@ void resetTrial(App& app,bool replay=false) {
     app.car.speed=app.freeDriving()?0:TrialCourse::entrySpeedKmh/3.6f;
     app.car.driftModel=replay?app.recordingModel:app.selectedModel;
     app.car.applyTuning(app.settings);
+    app.attack.reset(app.car.ground.s);
+    app.dash.respawn();
+    app.moments.reset();
+    app.sectorPopup=App::Popup{}; app.lapPopup=App::Popup{};
+    app.revThrottle=0; app.rumbleCooldown=0;
+    app.seenBoostSerial=app.car.boostSerial; app.lastDriftPhase=app.car.driftPhase;
     app.trial.reset();
     app.audio.reset();
     app.camera.ready=false;
@@ -814,6 +880,190 @@ void drawGroundShadow(App& app) {
     app.renderer.updateMesh(app.shadow,mesh);app.renderer.draw(app.shadow,Mat4{});
 }
 
+// Controller rumble for the moments. Browsers without vibration simply ignore it.
+void rumble(App& app,float strong,float weak,int ms) {
+    strong=clampf(strong,0,1); weak=clampf(weak,0,1);
+#ifdef __EMSCRIPTEN__
+    (void)app;
+    EM_ASM({
+        try {
+            const pads=navigator.getGamepads?navigator.getGamepads():[];
+            for(const pad of pads) {
+                const actuator=pad&&pad.vibrationActuator;
+                if(actuator&&actuator.playEffect)
+                    actuator.playEffect('dual-rumble',{startDelay:0,duration:$2,weakMagnitude:$1,strongMagnitude:$0}).catch(()=>{});
+            }
+        } catch(e) {}
+    },strong,weak,ms);
+#else
+    if(app.pad) SDL_GameControllerRumble(app.pad,Uint16(strong*65535),Uint16(weak*65535),Uint32(ms));
+#endif
+}
+
+std::string lapClock(float seconds) {
+    if(!(seconds>=0)||!std::isfinite(seconds)) seconds=0;
+    const long hundredths=std::lround(double(seconds)*100.0);
+    char text[32];
+    std::snprintf(text,sizeof(text),"%ld:%02ld.%02ld",hundredths/6000,(hundredths/100)%60,hundredths%100);
+    return text;
+}
+
+std::string signedSeconds(float seconds) {
+    char text[32];
+    std::snprintf(text,sizeof(text),"%+.2f",double(seconds));
+    return text;
+}
+
+void onPickup(App& app,const DashItems::Pickup& pickup) {
+    app.moments.item(pickup.chain);
+    app.audio.cue(DriftAudio::Cue::Item,pickup.chain);
+    rumble(app,0.12f,0.45f,70);
+}
+
+void handleAttackEvents(App& app,const std::vector<TimeAttack::Event>& events) {
+    using Type=TimeAttack::Event::Type;
+    bool improved=false;
+    for(const auto& event:events) {
+        switch(event.type) {
+        case Type::Count:
+            app.audio.cue(DriftAudio::Cue::CountTick);
+            break;
+        case Type::Go:
+            app.audio.cue(DriftAudio::Cue::CountGo);
+            app.moments.go();
+            rumble(app,0.55f,0.35f,140);
+            break;
+        case Type::Sector: {
+            improved=improved||event.best;
+            // The last sector closes the lap; the lap itself takes the stage then.
+            if(std::size_t(event.index)>=app.attack.checkpoints.size()) break;
+            App::Popup popup;
+            popup.title=app.attack.sectorLabel(event.index);
+            popup.life=2.4f;
+            const Vec3 green=Moments::kSectorGreen, slower{1.0f,0.5f,0.42f};
+            popup.detail=event.hadBest?signedSeconds(event.delta):lapClock(event.time);
+            popup.detailColor=event.best?green:slower;
+            app.sectorPopup=popup;
+            if(event.best) {
+                app.moments.sectorBest();
+                app.audio.cue(DriftAudio::Cue::SectorBest);
+                rumble(app,0.3f,0.6f,140);
+            } else {
+                app.audio.cue(DriftAudio::Cue::SectorSlower);
+            }
+            break;
+        }
+        case Type::Lap: {
+            improved=improved||event.best;
+            App::Popup popup;
+            popup.title="LAP "+std::to_string(event.index)+"  "+lapClock(event.time);
+            popup.life=3.6f;
+            if(event.best) {
+                popup.detail="NEW RECORD!";
+                popup.detailColor=Moments::kRecordGold;
+                app.audio.cue(DriftAudio::Cue::Record);
+                rumble(app,1.0f,0.8f,650);
+            } else {
+                popup.detail=signedSeconds(event.delta);
+                popup.detailColor={1.0f,0.5f,0.42f};
+                app.audio.cue(DriftAudio::Cue::Lap);
+                rumble(app,0.7f,0.5f,300);
+            }
+            app.lapPopup=popup;
+            app.sectorPopup=App::Popup{};
+            app.moments.lap(event.best);
+            app.dash.respawn();
+            break;
+        }
+        }
+    }
+    if(improved) saveBest(app);
+}
+
+// Rumble for the driving itself: a slide starting, a release, a barrier, a landing.
+void watchDriving(App& app,float dt) {
+    app.rumbleCooldown=std::max(0.0f,app.rumbleCooldown-dt);
+    if(app.car.boostSerial!=app.seenBoostSerial) {
+        app.seenBoostSerial=app.car.boostSerial;
+        const int level=app.car.boostLevel;
+        if(level>0) rumble(app,0.35f+0.2f*level,0.3f+0.1f*level,140+60*level);
+    }
+    if(app.car.driftPhase==DriftPhase::Entry&&app.lastDriftPhase==DriftPhase::None) rumble(app,0.22f,0.12f,90);
+    app.lastDriftPhase=app.car.driftPhase;
+    if(app.car.impact>4&&app.rumbleCooldown<=0) {
+        rumble(app,clampf(app.car.impact/18,0.3f,1),0.4f,120);
+        app.rumbleCooldown=0.25f;
+    }
+    if(app.car.landingImpact>2) rumble(app,clampf(app.car.landingImpact/8,0.2f,0.8f),0.2f,100);
+}
+
+void drawDash(App& app) {
+    CpuMesh solid,glow;
+    app.dash.buildMeshes(solid,glow,app.camera.eye);
+    app.renderer.updateMesh(app.dashSolid,solid);
+    app.renderer.updateMesh(app.dashGlow,glow);
+    app.renderer.draw(app.dashSolid,Mat4{});
+    app.renderer.drawGlow(app.dashGlow,Mat4{},1);
+}
+
+float textWidth(const std::string& text,float scale) {
+    float width=0;
+    for(char c:text) width+=(c==' '?4.0f:6.0f)*scale;
+    return std::max(0.0f,width-scale);
+}
+
+// Centred text with a soft shadow, readable over sky and asphalt alike.
+void drawCentered(Renderer& h,float centreX,float y,float scale,const std::string& text,Vec3 color,float alpha) {
+    if(alpha<=0.002f||text.empty()) return;
+    const float x=centreX-textWidth(text,scale)*0.5f;
+    h.drawText(x+scale*0.6f,y+scale*0.6f,scale,text.c_str(),0,0,0,0.55f*alpha);
+    h.drawText(x,y,scale,text.c_str(),color.x,color.y,color.z,alpha);
+}
+
+void drawAttackHud(App& app,float u) {
+    auto& h=app.renderer;
+    const auto& attack=app.attack;
+    const float cx=h.width*0.5f;
+    // Lap clock, top centre.
+    h.addQuad(cx-150*u,16*u,cx+150*u,92*u,0.015f,0.025f,0.04f,0.62f);
+    drawCentered(h,cx,23*u,2.3f*u,"LAP "+std::to_string(attack.lap),{0.75f,0.8f,0.86f},1);
+    drawCentered(h,cx,44*u,4.2f*u,lapClock(attack.lapTime),{1,1,1},1);
+    if(attack.bestLap>0) drawCentered(h,cx,102*u,2.0f*u,"BEST "+lapClock(attack.bestLap),{0.85f,0.88f,0.92f},0.9f);
+
+    // Countdown and GO.
+    const int digit=attack.countdownDigit();
+    if(digit>0) {
+        const float into=attack.countdown-std::floor(attack.countdown);
+        const float pop=1+0.45f*std::pow(1-into,3.0f);
+        const float scale=17*u*pop;
+        drawCentered(h,cx,h.height*0.36f-3.5f*scale,scale,std::to_string(digit),{1,1,1},clampf(1.6f-into,0,1));
+    } else if(app.moments.goAge>=0&&app.moments.goAge<0.9f) {
+        const float t=app.moments.goAge;
+        const float scale=18*u*(1+0.5f*std::pow(clampf(1-t/0.25f,0,1),2.0f));
+        drawCentered(h,cx,h.height*0.36f-3.5f*scale,scale,"GO!",Moments::kSectorGreen,clampf((0.9f-t)/0.3f,0,1));
+    }
+
+    // Split: name and gain or loss, under the clock.
+    auto& sector=app.sectorPopup;
+    if(sector.life>0&&sector.age<sector.life) {
+        const float fade=clampf((sector.life-sector.age)/0.4f,0,1);
+        const float slide=(1-clampf(sector.age/0.12f,0,1))*10*u;
+        drawCentered(h,cx,134*u-slide,2.4f*u,sector.title,sector.titleColor,fade);
+        drawCentered(h,cx,156*u-slide,3.6f*u,sector.detail,sector.detailColor,fade);
+    }
+
+    // Lap result in the middle of the screen.
+    auto& lap=app.lapPopup;
+    if(lap.life>0&&lap.age<lap.life) {
+        const float fade=clampf((lap.life-lap.age)/0.5f,0,1);
+        const float pop=1+0.3f*std::pow(clampf(1-lap.age/0.25f,0,1),2.0f);
+        drawCentered(h,cx,h.height*0.30f,4.0f*u*pop,lap.title,{1,1,1},fade);
+        const bool record=lap.detail=="NEW RECORD!";
+        const float blink=record?0.75f+0.25f*std::sin(lap.age*14):1;
+        drawCentered(h,cx,h.height*0.30f+44*u*pop,(record?5.2f:3.6f)*u*pop,lap.detail,lap.detailColor,fade*blink);
+    }
+}
+
 void drawHud(App& app) {
     auto& h=app.renderer; h.beginHud();
     drawSpeedCues(app);
@@ -828,6 +1078,7 @@ void drawHud(App& app) {
     if(!app.car.grounded) state="AIRBORNE";
     if(app.paused) state="PAUSED";
     h.drawText(float(h.width)-245*u,25*u,2.6f*u,state,0.95f,0.95f,0.95f,1);
+    if(app.started&&app.attack.enabled()) drawAttackHud(app,u);
     if(app.started) {
         const float thresholds[]={0,0.65f,1.30f,2.20f};
         const Vec3 colors[]={{0.08f,0.48f,1},{1,0.34f,0.035f},{1,0.12f,0.66f}};
@@ -950,11 +1201,27 @@ void frame(void* userdata) {
     elapsed=std::max(0.0,std::min(0.1,elapsed));
     if(command==1 || command==2) elapsed=0;
     app.currentImpact=app.currentLandingImpact=app.currentAcceleration=0;
+    const bool live=app.started&&!app.paused&&!app.ended;
+    // Slow motion feeds the simulation more slowly; the lap clock runs on simulated time.
+    const float timeScale=live?app.moments.timeScale():1.0f;
+    if(live) {
+        app.moments.tick(float(elapsed));
+        for(auto* popup:{&app.sectorPopup,&app.lapPopup}) if(popup->life>0) popup->age+=float(elapsed);
+    }
     if(app.paused || !app.started || app.ended) app.accumulator=0;
     else {
-        app.accumulator+=elapsed;
+        app.accumulator+=elapsed*timeScale;
         while(app.accumulator>=kFixedStepSec && !app.ended) {
             DriveInput drive=input;
+            if(app.attack.enabled()&&app.attack.phase==TimeAttack::Phase::Countdown) {
+                // The car waits on the grid; the accelerator only revs the engine.
+                app.revThrottle+=(clampf(drive.throttle,0,1)-app.revThrottle)*(1-std::exp(-12*float(kFixedStepSec)));
+                handleAttackEvents(app,app.attack.update(float(kFixedStepSec),app.car.ground.s));
+                ++app.frameNumber;
+                app.accumulator-=kFixedStepSec;
+                continue;
+            }
+            app.revThrottle=0;
             if(app.replay) {
                 if(app.replayFrame>=app.lastRecording.size()) {finishRun(app);break;}
                 drive=app.lastRecording[app.replayFrame++];
@@ -993,6 +1260,11 @@ void frame(void* userdata) {
             else app.trial.tick(app.car,drive,float(kFixedStepSec));
             tickEffects(app,float(kFixedStepSec));
             app.boostTrail.tick(float(kFixedStepSec),app.car,bodyMatrix(app));
+            if(app.attack.enabled()) {
+                for(const auto& pickup:app.dash.update(float(kFixedStepSec),app.car)) onPickup(app,pickup);
+                handleAttackEvents(app,app.attack.update(float(kFixedStepSec),app.car.ground.s));
+            }
+            watchDriving(app,float(kFixedStepSec));
             ++app.frameNumber;
             app.accumulator-=kFixedStepSec;
             if((!app.freeDriving() && app.trial.metrics.finished && app.car.boostRemaining<=0) ||
@@ -1006,21 +1278,37 @@ void frame(void* userdata) {
     app.audio.setRevProfile(app.settings.engineRevScale,app.settings.engineRevReturn);
     if(app.ended) app.finishedAge+=float(elapsed);
     bool audioPaused=app.paused||!app.started||(app.ended&&app.finishedAge>0.5f);
-    app.audio.update(app.ended?0:app.car.speed,app.ended?0:app.car.throttleLevel,
+    app.audio.update(app.ended?0:app.car.speed,app.ended?0:std::max(app.car.throttleLevel,app.revThrottle),
                      app.ended||!app.car.grounded?0:slipFeedback(app.car.speed,app.car.slipAngle,app.car.onAsphalt),app.currentImpact,audioPaused,
                      app.ended?0:std::max(std::fabs(app.car.speed)-app.car.boostSpeedBonus,0.0f),audioPaused?0:app.currentAcceleration);
     app.audio.setDriftState(app.car.driftChargeLevel,app.car.boostLevel,app.car.boostSerial,app.car.boostRemaining);
     app.audio.setLandingState(app.car.landingSerial,app.currentLandingImpact*app.settings.landingImpactScale);
-    updateCamera(app,float(elapsed));
+    updateCamera(app,float(elapsed)*timeScale);
     int w=0,h=0; SDL_GL_GetDrawableSize(app.window,&w,&h);
     app.renderer.resize(w,h);
     const float blur=app.started&&!app.ended&&app.car.boostRemaining>0 && app.car.speed>1 && app.settings.boostSpeedScale>0
         ? app.car.boostEnvelopeAmount()*app.settings.boostBlurStrength : 0;
-    app.renderer.clearFrame(blur); app.renderer.drawSky();
+    // Bright moments layer glow, colour fringing, flashes, a green or gold edge and
+    // a small punch-in over the frame. Between moments the frame is drawn directly.
+    PostParams post;
+    post.blur=blur;
+    if(app.started&&!app.ended) {
+        const float fx=app.settings.momentFxScale;
+        const int level=std::max(0,std::min(3,app.car.boostLevel));
+        const float boostGlow=app.settings.boostSpeedScale>0?
+            std::max(app.camera.boostAmount,app.car.boostEnvelopeAmount()*0.7f)*(0.55f+0.15f*level):0;
+        post.bloom=(boostGlow*0.9f+app.moments.burst*0.9f+app.moments.flash*0.25f)*fx;
+        post.chroma=(boostGlow*0.75f+app.moments.zoom*0.35f+app.moments.burst*0.8f)*fx;
+        post.zoom=app.moments.zoom*fx;
+        post.flash=app.moments.flash*fx; post.flashColor=app.moments.flashColor;
+        post.edge=app.moments.edge*fx; post.edgeColor=app.moments.edgeColor;
+    }
+    app.renderer.clearFrame(post); app.renderer.drawSky();
     float fov=app.camera.fovDegrees/kDegrees;
     Mat4 proj=perspective(fov,float(w)/float(std::max(1,h)),0.15f,4000);
     app.renderer.beginWorld(mul(proj,lookAt(app.camera.eye,app.camera.look,{0,1,0})),app.camera.eye);
     app.renderer.draw(app.course,Mat4{}); drawEffects(app);
+    if(app.attack.enabled()) drawDash(app);
     drawGroundShadow(app);
     Mat4 model=mul(translation(0,app.car.grounded?app.car.groundHeight-app.car.y:0,0),carModelMatrix(app.car,app.car.terrainPitch,app.car.terrainRoll));
     const Mat4 bodyModel=bodyMatrix(app);
@@ -1202,6 +1490,7 @@ int main(int argc,char** argv) {
     if(audioOk) audioOk=app.audio.init();
     if(!audioOk) SDL_Log("Audio unavailable: %s",Mix_GetError());
     app.course=app.renderer.upload(app.track.visual);
+    prepareCourse(app);
     CpuMesh body,wheel,shadow,smoke,jet;
     buildCarBody(body);buildCarWheel(wheel);buildCarShadow(shadow);
     smoke.addQuad({-1,-1,0},{1,-1,0},{1,1,0},{-1,1,0},{0,0,-1},{0.72f,0.74f,0.76f});

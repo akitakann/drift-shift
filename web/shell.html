@@ -41,7 +41,7 @@ a{color:#eee;text-underline-offset:2px}
 <body>
 <main id="viewport">
 <div id="stage">
-<canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="ドリフトゲーム。WASDまたは矢印キーで運転、Space長押しでドリフト、離してブースト。PまたはEscで一時停止。" oncontextmenu="event.preventDefault()"></canvas>
+<canvas id="canvas" width="1280" height="720" tabindex="0" aria-label="ドリフトのタイムアタック。WASDまたは矢印キーで運転、Space長押しでドリフト、離してブースト。PまたはEscで一時停止。" oncontextmenu="event.preventDefault()"></canvas>
 <button id="menu-button" type="button" aria-label="メニューを開く（Esc）" title="一時停止（Esc）" hidden>Ⅱ</button>
 <section class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="menu-title">
 <div class="menu">
@@ -55,7 +55,7 @@ a{color:#eee;text-underline-offset:2px}
 <button id="fullscreen" type="button">全画面</button>
 <button id="reload" type="button" hidden>読み込み直す</button>
 </div>
-<p class="controls" id="controls">W / ↑ アクセル　S / ↓ ブレーキ<br>A D / ← → ハンドル　Space 長押しでドリフト・離してブースト<br>P / Esc 一時停止　R リスタート　M 音</p>
+<p class="controls" id="controls">W / ↑ アクセル　S / ↓ ブレーキ<br>A D / ← → ハンドル　Space 長押しでドリフト・離してブースト<br>P / Esc 一時停止　R リスタート　M 音<br>コントローラー：RT アクセル　LT ブレーキ　左スティック ハンドル<br>A 長押しでドリフト・離してブースト　Start 一時停止　Back リスタート</p>
 <details id="credits">
 <summary>クレジット</summary>
 <p>ベース: <a href="https://github.com/BandaiNamcoStudios-Workshop/ge-i26-racegame" target="_blank" rel="noopener noreferrer">BandaiNamcoStudios-Workshop / ge-i26-racegame</a>。</p>
@@ -76,7 +76,7 @@ a{color:#eee;text-underline-offset:2px}
 <script>
 (function(){
   'use strict';
-  const VERSION = 'dev-v3-radio-bgm';
+  const VERSION = 'dev-v4-time-attack';
   const PRESET = @RELEASE_PRESET@;
   const $=id=>document.getElementById(id);
   const canvas=$('canvas'),overlay=$('overlay');
@@ -140,7 +140,7 @@ a{color:#eee;text-underline-offset:2px}
     if(fatal)return;
     $('menu-title').textContent=window.driftLab.started?'一時停止':'DRIFT';
     $('primary').textContent=window.driftLab.started?(state.finished?'もう一度走る':'再開'):'開始';
-    $('status').textContent=menuNotice||(!runtimeReady?'読み込み中…':'Spaceをためて、離してブースト。');
+    $('status').textContent=menuNotice||(!runtimeReady?'読み込み中…':'鈴鹿1周のタイムアタック。黄色い箱で加速、Spaceをためて離してブースト。');
     if(show&&wasHidden&&document.hasFocus()&&!document.hidden)$('primary').focus({preventScroll:true});
   }
   function startOrResume(restart=false){

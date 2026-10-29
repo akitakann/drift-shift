@@ -122,34 +122,72 @@ const char* kPostFs = R"GLSL(
 in vec2 vUv;
 uniform sampler2D uWorld;
 uniform float uBlurAmount;
+uniform float uBloom;
+uniform float uChroma;
+uniform float uZoom;
+uniform float uFlash;
+uniform vec3 uFlashColor;
+uniform float uEdge;
+uniform vec3 uEdgeColor;
+uniform vec2 uTexel;
 out vec4 fragColor;
+vec3 scene(vec2 uv) { return texture(uWorld, clamp(uv, vec2(0.0), vec2(1.0))).rgb; }
 void main() {
-    vec4 original = texture(uWorld, vUv);
-    // Texture coordinates have their origin at the bottom. Preserve the next
-    // stretch of road and the broad lower-middle region occupied by the car.
-    float gaze = length((vUv - vec2(0.5, 0.54)) / vec2(0.25, 0.23));
-    float car = length((vUv - vec2(0.5, 0.30)) / vec2(0.32, 0.30));
+    // Texture coordinates have their origin at the bottom. The view centre sits
+    // a little above the middle, on the next stretch of road.
+    vec2 centre = vec2(0.5, 0.54);
+    vec2 uv = centre + (vUv - centre) * (1.0 - 0.05 * clamp(uZoom, 0.0, 1.0));
+    vec3 original = scene(uv);
+    vec3 color = original;
+    // Preserve the next stretch of road and the broad lower-middle region
+    // occupied by the car; only the periphery is blurred and fringed.
+    float gaze = length((uv - centre) / vec2(0.25, 0.23));
+    float car = length((uv - vec2(0.5, 0.30)) / vec2(0.32, 0.30));
     float peripheral = smoothstep(0.90, 1.60, gaze) * smoothstep(0.90, 1.40, car);
     float strength = clamp(uBlurAmount, 0.0, 2.0) * peripheral;
-    if (strength < 0.0001) {
-        fragColor = original;
-        return;
+    vec2 radial = uv - centre;
+    if (strength > 0.0001) {
+        vec2 stepUv = radial / max(length(radial), 0.0001) * (0.018 * strength / 8.0);
+        vec3 sum = original * 2.0;
+        float total = 2.0;
+        for (int i = 1; i <= 8; ++i) {
+            float weight = 1.0 - float(i) * 0.075;
+            sum += scene(uv - stepUv * float(i)) * weight;
+            total += weight;
+        }
+        color = mix(original, sum / total, peripheral);
     }
-    vec2 radial = vUv - vec2(0.5, 0.54);
-    vec2 stepUv = radial / max(length(radial), 0.0001) * (0.018 * strength / 8.0);
-    vec3 sum = original.rgb * 2.0;
-    float total = 2.0;
-    for (int i = 1; i <= 8; ++i) {
-        float weight = 1.0 - float(i) * 0.075;
-        sum += texture(uWorld, clamp(vUv - stepUv * float(i), vec2(0.0), vec2(1.0))).rgb * weight;
-        total += weight;
+    float chroma = clamp(uChroma, 0.0, 2.0) * smoothstep(0.12, 0.55, length(radial * vec2(1.6, 1.0)));
+    if (chroma > 0.0001) {
+        vec2 shift = radial * 0.022 * chroma;
+        color.r = mix(color.r, scene(uv + shift).r, min(chroma * 2.0, 1.0));
+        color.b = mix(color.b, scene(uv - shift).b, min(chroma * 2.0, 1.0));
     }
-    fragColor = vec4(mix(original.rgb, sum / total, peripheral), original.a);
+    float bloom = clamp(uBloom, 0.0, 2.0);
+    if (bloom > 0.0001) {
+        // Two rings of taps gather the light of nearby bright areas.
+        vec3 glow = vec3(0.0);
+        for (int i = 0; i < 12; ++i) {
+            float angle = float(i) * 0.5235988 + (i % 2 == 0 ? 0.0 : 0.26);
+            float reach = i % 2 == 0 ? 7.0 : 16.0;
+            vec2 offset = vec2(cos(angle), sin(angle)) * reach * uTexel;
+            vec3 tap = scene(uv + offset);
+            glow += max(tap - vec3(0.72), vec3(0.0));
+        }
+        color += glow / 12.0 * bloom * 2.6;
+    }
+    // A thin luminous frame hugging the screen border (16:9), not a tint over the view.
+    vec2 fromEdge = min(vUv, vec2(1.0) - vUv);
+    float edgeMask = exp(-min(fromEdge.x * 1.78, fromEdge.y) / 0.06);
+    color += uEdgeColor * clamp(uEdge, 0.0, 1.0) * edgeMask * 0.9;
+    // Screen blend: a flash brightens the frame instead of washing it toward one colour.
+    color = vec3(1.0) - (vec3(1.0) - min(color, vec3(1.0))) * (vec3(1.0) - uFlashColor * clamp(uFlash, 0.0, 1.0) * 0.85);
+    fragColor = vec4(min(color, vec3(1.0)), 1.0);
 }
 )GLSL";
 
-// 5x7。bit4 が左端。並びは 0-9 A-Z . : - / %
-constexpr char kGlyphOrder[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:-/%";
+// 5x7。bit4 が左端。並びは 0-9 A-Z . : - / % + !
+constexpr char kGlyphOrder[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:-/%+!";
 const std::uint8_t kFont[][7] = {
     {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
     {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E},
@@ -172,6 +210,7 @@ const std::uint8_t kFont[][7] = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}, {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00},
     {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}, {0x01, 0x02, 0x04, 0x04, 0x08, 0x10, 0x10},
     {0x19, 0x1A, 0x02, 0x04, 0x08, 0x0B, 0x13},
+    {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}, {0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x04},
 };
 static_assert(sizeof(kFont) / sizeof(kFont[0]) == sizeof(kGlyphOrder) - 1, "glyph count");
 
@@ -253,6 +292,14 @@ bool Renderer::init() {
     if (postProgram_) {
         uPostTexture_ = glGetUniformLocation(postProgram_, "uWorld");
         uPostAmount_ = glGetUniformLocation(postProgram_, "uBlurAmount");
+        uPostBloom_ = glGetUniformLocation(postProgram_, "uBloom");
+        uPostChroma_ = glGetUniformLocation(postProgram_, "uChroma");
+        uPostZoom_ = glGetUniformLocation(postProgram_, "uZoom");
+        uPostFlash_ = glGetUniformLocation(postProgram_, "uFlash");
+        uPostFlashColor_ = glGetUniformLocation(postProgram_, "uFlashColor");
+        uPostEdge_ = glGetUniformLocation(postProgram_, "uEdge");
+        uPostEdgeColor_ = glGetUniformLocation(postProgram_, "uEdgeColor");
+        uPostTexel_ = glGetUniformLocation(postProgram_, "uTexel");
     }
 
     glGenVertexArrays(1, &hudVao);
@@ -275,12 +322,23 @@ bool Renderer::init() {
     return true;
 }
 
-void Renderer::clearFrame(float blurAmount) {
+void Renderer::clearFrame(const PostParams& requestedPost) {
     if (postFrame_) finishWorld();
-    const float requested = std::isfinite(blurAmount) ? clampf(blurAmount, 0, 2) : 0;
+    auto bounded = [](float value, float high) { return std::isfinite(value) ? clampf(value, 0, high) : 0.0f; };
+    PostParams post = requestedPost;
+    post.blur = bounded(post.blur, 2);
+    post.bloom = bounded(post.bloom, 2);
+    post.chroma = bounded(post.chroma, 2);
+    post.zoom = bounded(post.zoom, 1);
+    post.flash = bounded(post.flash, 1);
+    post.edge = bounded(post.edge, 1);
     appliedBlur = 0;
-    postFrame_ = drawable_ && requested > 0 && ensurePostTarget();
-    if (postFrame_) appliedBlur = requested;
+    appliedPost = PostParams{};
+    postFrame_ = drawable_ && post.active() && ensurePostTarget();
+    if (postFrame_) {
+        appliedBlur = post.blur;
+        appliedPost = post;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, postFrame_ ? postFbo_ : 0);
     glViewport(0, 0, drawable_ ? width : 0, drawable_ ? height : 0);
     glDepthMask(GL_TRUE);
@@ -395,6 +453,14 @@ void Renderer::finishWorld() {
     glBindTexture(GL_TEXTURE_2D, postColor_);
     glUniform1i(uPostTexture_, 0);
     glUniform1f(uPostAmount_, appliedBlur);
+    glUniform1f(uPostBloom_, appliedPost.bloom);
+    glUniform1f(uPostChroma_, appliedPost.chroma);
+    glUniform1f(uPostZoom_, appliedPost.zoom);
+    glUniform1f(uPostFlash_, appliedPost.flash);
+    glUniform3f(uPostFlashColor_, appliedPost.flashColor.x, appliedPost.flashColor.y, appliedPost.flashColor.z);
+    glUniform1f(uPostEdge_, appliedPost.edge);
+    glUniform3f(uPostEdgeColor_, appliedPost.edgeColor.x, appliedPost.edgeColor.y, appliedPost.edgeColor.z);
+    glUniform2f(uPostTexel_, 1.0f / float(std::max(width, 1)), 1.0f / float(std::max(height, 1)));
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
     glBindSampler(0, static_cast<GLuint>(sampler));
@@ -423,6 +489,7 @@ void Renderer::shutdown() {
     postProgram_ = worldProgram = skyProgram = hudProgram = 0;
     hudVbo = hudIbo = hudVao = dummyVao = 0;
     uPostTexture_ = uPostAmount_ = -1;
+    uPostBloom_ = uPostChroma_ = uPostZoom_ = uPostFlash_ = uPostFlashColor_ = uPostEdge_ = uPostEdgeColor_ = uPostTexel_ = -1;
     uViewProj = uModel = uCamPos = uOrtho = uOpacity = uSmoke = -1;
     attemptedPostWidth_ = attemptedPostHeight_ = 0;
     postAvailable = postFrame_ = false;

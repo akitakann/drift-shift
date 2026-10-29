@@ -19,6 +19,10 @@ public:
     void update(float speed, float throttle, float drift, float impact, bool paused, float driveSpeed = -1, float acceleration = 0);
     void setDriftState(int chargeLevel, int boostLevel, unsigned boostSerial, float boostRemaining);
     void bank(float quality);
+    // Short synthesized jingles for the time attack. Safe to call every frame;
+    // a full queue drops the newest cue rather than blocking.
+    enum class Cue { CountTick, CountGo, Item, SectorBest, SectorSlower, Lap, Record };
+    void cue(Cue cue, int step = 0);
     void setMuted(bool muted);
     void setGain(float gain);
     void setLayerGains(float engine, float tire);
@@ -36,6 +40,9 @@ private:
     static void postMix(void* userdata, std::uint8_t* stream, int length);
     void render(std::uint8_t* stream, int length);
     bool loadLoop(SDL_RWops* source, std::vector<float>& pcm);
+    void startCue(int type, int step);
+    void addTone(float delay, float length, float hz, float gain, float bright);
+    float renderTones(double dt);
     void loadSampleLoops(SDL_RWops* engineSource, SDL_RWops* tireSource);
 
     std::atomic<float> speed_{0};
@@ -46,6 +53,10 @@ private:
     std::atomic<float> impact_{0};
     std::atomic<float> bankQuality_{0};
     std::atomic<unsigned> bankSerial_{0};
+    struct CueEvent { int type = 0; int step = 0; };
+    static constexpr unsigned kCueQueue = 32;
+    CueEvent cueQueue_[kCueQueue];
+    std::atomic<unsigned> cueWrite_{0}, cueRead_{0};
     std::atomic<bool> paused_{false};
     std::atomic<bool> muted_{false};
     std::atomic<float> gain_{1};
@@ -91,6 +102,9 @@ private:
     float bankTime_ = -1;
     float cueQuality_ = 0;
     unsigned seenBankSerial_ = 0;
+    struct Tone { float delay = 0, age = 0, length = 0, hz = 0, gain = 0, bright = 0; double phase = 0; bool active = false; };
+    static constexpr int kTones = 24;
+    Tone tones_[kTones];
     int seenChargeLevel_ = 0;
     unsigned seenBoostSerial_ = 0;
     bool boostSerialPrimed_ = false;
