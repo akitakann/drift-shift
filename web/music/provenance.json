@@ -1,0 +1,119 @@
+{
+  "format_version": 1,
+  "purpose": "Full-song browser game BGM; each recording retains its own license.",
+  "tracks": [
+    {
+      "title": "Slam Van",
+      "artist": "The Spin Wires",
+      "output": "slam-van.ogg",
+      "source_url": "https://freemusicarchive.org/music/The_Spin_Wires/single/slam-van/",
+      "artist_source_url": "https://spinwires.bandcamp.com/track/slam-van-3",
+      "download_url": "https://files.freemusicarchive.org/storage-freemusicarchive-org/tracks/0v3DBOYkU2ydGP3jYtuLhg0cInsglK43YPmAakIa.mp3",
+      "license": "CC BY-NC 4.0",
+      "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+      "license_legalcode_url": "https://creativecommons.org/licenses/by-nc/4.0/legalcode",
+      "attribution": "Slam Van by The Spin Wires, https://freemusicarchive.org/music/The_Spin_Wires/single/slam-van/, licensed under CC BY-NC 4.0, https://creativecommons.org/licenses/by-nc/4.0/. Converted to Ogg Vorbis, resampled and normalized for local game playback; playback includes volume changes and crossfades.",
+      "processing": {
+        "normalization": "two-pass FFmpeg loudnorm, linear mode, full decoded program",
+        "target": {
+          "integrated_lufs": -20,
+          "true_peak_ceiling_dbtp": -2,
+          "loudness_range_lu": 11
+        },
+        "codec": "Ogg Vorbis (libvorbis), quality 4",
+        "sample_rate_hz": 44100,
+        "channels": 2,
+        "intentional_trimming": false,
+        "normalization_filter": "loudnorm=I=-20:TP=-2:LRA=11:measured_I=-7.39:measured_TP=1.49:measured_LRA=3.20:measured_thresh=-17.45:offset=-0.63:linear=true:print_format=json",
+        "ffmpeg_version": "7.1-essentials_build-www.gyan.dev",
+        "tool_package": "imageio-ffmpeg 0.7.0"
+      },
+      "original_audio": {
+        "bytes": 4383246,
+        "sha256": "594be6d4380293ae8b524123337e179c7528aa0402a41af0718f6d9a8c8ed878",
+        "codec": "mp3float",
+        "sample_rate_hz": 44100,
+        "channels": 2,
+        "decoded_samples_per_channel": 5452363,
+        "decoded_duration_seconds": 123.63634920634921,
+        "full_decode_verified": true
+      },
+      "processed_audio": {
+        "bytes": 1918611,
+        "sha256": "5ff8f20ab836feeeab4a7d154e068e04e0f89fee3913ca3f10642e3db8a05890",
+        "codec": "vorbis",
+        "sample_rate_hz": 44100,
+        "channels": 2,
+        "decoded_samples_per_channel": 5452363,
+        "decoded_duration_seconds": 123.63634920634921,
+        "full_decode_verified": true
+      },
+      "processed_loudness": {
+        "input_i": "-20.08",
+        "input_tp": "-10.07",
+        "input_lra": "3.20"
+      }
+    },
+    {
+      "title": "Time Bomb",
+      "artist": "echo_orbit",
+      "featured_artist": "Thespinwires",
+      "display_credit": "echo_orbit feat. Thespinwires",
+      "output": "time-bomb-remix.ogg",
+      "source_url": "https://ccmixter.org/files/echo_orbit/67147",
+      "download_url": "https://ccmixter.org/content/echo_orbit/echo_orbit_-_Time_Bomb.mp3",
+      "license": "CC BY 3.0",
+      "license_url": "https://creativecommons.org/licenses/by/3.0/",
+      "license_legalcode_url": "https://creativecommons.org/licenses/by/3.0/legalcode",
+      "sample_source": {
+        "title": "Time Bomb - Vocals",
+        "artist": "Thespinwires",
+        "source_url": "https://ccmixter.org/files/Thespinwires/64088",
+        "license": "CC BY 3.0",
+        "license_url": "https://creativecommons.org/licenses/by/3.0/",
+        "downloaded": false
+      },
+      "attribution": "Time Bomb by echo_orbit feat. Thespinwires, https://ccmixter.org/files/echo_orbit/67147/, licensed under CC BY 3.0, https://creativecommons.org/licenses/by/3.0/. Contains Time Bomb - Vocals by Thespinwires, https://ccmixter.org/files/Thespinwires/64088, also CC BY 3.0. Converted to Ogg Vorbis, resampled and normalized for local game playback; playback includes volume changes and crossfades.",
+      "processing": {
+        "normalization": "two-pass FFmpeg loudnorm, linear mode, full decoded program",
+        "target": {
+          "integrated_lufs": -20,
+          "true_peak_ceiling_dbtp": -2,
+          "loudness_range_lu": 11
+        },
+        "codec": "Ogg Vorbis (libvorbis), quality 4",
+        "sample_rate_hz": 44100,
+        "channels": 2,
+        "intentional_trimming": false,
+        "normalization_filter": "loudnorm=I=-20:TP=-2:LRA=11:measured_I=-8.21:measured_TP=0.50:measured_LRA=2.60:measured_thresh=-18.37:offset=-0.63:linear=true:print_format=json",
+        "ffmpeg_version": "7.1-essentials_build-www.gyan.dev",
+        "tool_package": "imageio-ffmpeg 0.7.0"
+      },
+      "original_audio": {
+        "bytes": 7446144,
+        "sha256": "64a752e53c7fff64ef2857ec6769cbc989c04c42441ac06e275dfd048d3b3846",
+        "codec": "mp3float",
+        "sample_rate_hz": 48000,
+        "channels": 2,
+        "decoded_samples_per_channel": 8930304,
+        "decoded_duration_seconds": 186.048,
+        "full_decode_verified": true
+      },
+      "processed_audio": {
+        "bytes": 2672293,
+        "sha256": "f782b6120805216be182e135b396f4373f84cd0e6bc341971181eec10fc14741",
+        "codec": "vorbis",
+        "sample_rate_hz": 44100,
+        "channels": 2,
+        "decoded_samples_per_channel": 8204717,
+        "decoded_duration_seconds": 186.04800453514738,
+        "full_decode_verified": true
+      },
+      "processed_loudness": {
+        "input_i": "-20.11",
+        "input_tp": "-10.47",
+        "input_lra": "2.60"
+      }
+    }
+  ]
+}

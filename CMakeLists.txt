@@ -37,7 +37,10 @@ set(ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 if(EMSCRIPTEN)
     message(STATUS "TARGET_PLATFORM=Browser (Emscripten)")
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json" RELEASE_PRESET)
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/web/bgm.js" BGM_PLAYER_SCRIPT)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/bgm.js")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html" "${CMAKE_CURRENT_BINARY_DIR}/release-shell.html" @ONLY)
 
     set(EMSCRIPTEN_SDL_FLAGS
@@ -97,9 +100,21 @@ if(EMSCRIPTEN)
     set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/release-preset.json")
     set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/release-shell.html")
     set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/web/stamp_build.cmake")
+    set_property(TARGET racegame APPEND PROPERTY LINK_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/music/slam-van.ogg"
+        "${CMAKE_CURRENT_SOURCE_DIR}/web/music/time-bomb-remix.ogg")
     add_custom_command(TARGET racegame POST_BUILD
         COMMAND ${CMAKE_COMMAND} "-DINPUT=$<TARGET_FILE:racegame>" "-DSHELL_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html" -P "${CMAKE_CURRENT_SOURCE_DIR}/web/stamp_build.cmake"
         COMMENT "Keep the page, JavaScript and WebAssembly on one asset version"
+    )
+    # Stream full songs through browser audio, outside the preloaded Wasm data.
+    add_custom_command(TARGET racegame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/music"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/web/music/slam-van.ogg"
+                "${CMAKE_CURRENT_SOURCE_DIR}/web/music/time-bomb-remix.ogg"
+                "${CMAKE_CURRENT_BINARY_DIR}/music/"
+        COMMENT "Copy the two streamed BGM tracks"
     )
 
 else()

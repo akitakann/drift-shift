@@ -22,6 +22,8 @@ Wで加速し、ハンドルを切りながらSpaceを押し続けるとドリ�
 
 別の画面へ移ると一時停止します。戻って「再開」を押してください。全画面表示と音の切り替えもメニューで操作できます。
 
+BGMは「Slam Van」と「Time Bomb（echo_orbitリミックス版）」を交互にフル再生し、曲間を2.5秒でクロスフェードします。Rキーやメニューから走り直しても曲の再生位置は維持します。一時停止中は曲もその位置で止まり、Mキーの音の切り替えはBGMにも適用されます。
+
 ## 公開版の設定
 
 車・カメラ・音の調整値は [web/release-preset.json](web/release-preset.json) に固定しています。公開画面に調整パネル・比較・評価・記録のUIはなく、以前の試作ページがブラウザに保存した調整値も読み込みません。
@@ -53,6 +55,9 @@ ctest --test-dir build-native --output-on-failure
 
 - エンジン音: [Car Engine Loop — qubodup](https://freesound.org/people/qubodup/sounds/147242/)（[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)）。
 - タイヤ音: [Chrysler LHS tire squeal 04 — audible-edge](https://freesound.org/people/audible-edge/sounds/71739/)（[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)）。
+- BGM: [Slam Van — The Spin Wires](https://freemusicarchive.org/music/The_Spin_Wires/single/slam-van/)（[CC BY-NC 4.0・非商用限定](https://creativecommons.org/licenses/by-nc/4.0/)）。
+- BGM: [Time Bomb — echo_orbit](https://ccmixter.org/files/echo_orbit/67147)、ボーカル [Thespinwires](https://ccmixter.org/files/Thespinwires/64088)（ともに[CC BY 3.0](https://creativecommons.org/licenses/by/3.0/)）。バンドの原曲録音ではなくecho_orbitのリミックス版を使用しています。
+- BGMの取得元・加工・ライセンスは [web/music/CREDITS.md](web/music/CREDITS.md) に記載しています。音源それぞれの利用条件を保持してください。
 - 音源は公開HQプレビューから取得し、WAV化・音量調整・ループ境界加工を行っています。タイヤ音にはハイパス処理も加えています。区間・加工・ライセンスの詳細は [assets/audio/CREDITS.md](assets/audio/CREDITS.md) を参照してください。エンジン録音は車の動きに応じて再生速度を変えています。
 - コース中心線: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright)、[鈴鹿サーキット relation 284570](https://www.openstreetmap.org/relation/284570)（[Open Database License](https://opendatacommons.org/licenses/odbl/1-0/)）。
 - コース標高: 出典 [国土地理院](https://www.gsi.go.jp/)の標高タイル。

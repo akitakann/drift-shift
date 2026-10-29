@@ -61,6 +61,8 @@ a{color:#eee;text-underline-offset:2px}
 <p>ベース: <a href="https://github.com/BandaiNamcoStudios-Workshop/ge-i26-racegame" target="_blank" rel="noopener noreferrer">BandaiNamcoStudios-Workshop / ge-i26-racegame</a>。</p>
 <p>エンジン音: <a href="https://freesound.org/people/qubodup/sounds/147242/" target="_blank" rel="noopener noreferrer">Car Engine Loop — qubodup</a>（<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>）。公開HQプレビュー0〜4秒をWAV化し、音量調整・50msループ境界加工。再生速度を車の動きに合わせて変更しています。</p>
 <p>タイヤ音: <a href="https://freesound.org/people/audible-edge/sounds/71739/" target="_blank" rel="noopener noreferrer">Chrysler LHS tire squeal 04 — audible-edge</a>（<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0 1.0</a>）。公開HQプレビュー8〜14秒をWAV化し、音量調整・50msループ境界加工・180Hzハイパス処理。</p>
+<p>BGM: <a href="https://freemusicarchive.org/music/The_Spin_Wires/single/slam-van/" target="_blank" rel="noopener noreferrer">Slam Van — The Spin Wires</a>（<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0・非商用限定</a>）。全曲を音量調整してOgg Vorbisへ変換しています。</p>
+<p>BGM: <a href="https://ccmixter.org/files/echo_orbit/67147" target="_blank" rel="noopener noreferrer">Time Bomb — echo_orbit</a>、ボーカル: <a href="https://ccmixter.org/files/Thespinwires/64088" target="_blank" rel="noopener noreferrer">Thespinwires</a>（ともに<a href="https://creativecommons.org/licenses/by/3.0/" target="_blank" rel="noopener noreferrer">CC BY 3.0</a>）。echo_orbitのリミックス版を使用し、全曲を音量調整してOgg Vorbisへ変換しています。曲間にはクロスフェードを加えています。</p>
 <p>地図: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>（<a href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noopener noreferrer">ODbL</a>）、<a href="https://www.openstreetmap.org/relation/284570" target="_blank" rel="noopener noreferrer">鈴鹿サーキットの中心線</a>。標高: 出典 <a href="https://www.gsi.go.jp/" target="_blank" rel="noopener noreferrer">国土地理院</a>の標高タイル。</p>
 <p>車両・演出と、チャージ・ブースト・衝突・風・着地音はプログラムで生成しています。本作は課題用の非公式ゲームです。</p>
 </details>
@@ -69,9 +71,12 @@ a{color:#eee;text-underline-offset:2px}
 </div>
 </main>
 <script>
+@BGM_PLAYER_SCRIPT@
+</script>
+<script>
 (function(){
   'use strict';
-  const VERSION = 'release-v2-quiet-wind';
+  const VERSION = 'dev-v3-radio-bgm';
   const PRESET = @RELEASE_PRESET@;
   const $=id=>document.getElementById(id);
   const canvas=$('canvas'),overlay=$('overlay');
@@ -79,6 +84,22 @@ a{color:#eee;text-underline-offset:2px}
   window.driftLab={ready:false,started:false,command:0,group:0,candidate:presetModel,handlingModel:presetModel,muted:false,tuningOverrides:{...PRESET.tuning},tuningRevision:0};
   let runtimeReady=false,fatal=false,state={},desiredPause=null;
   let menuNotice='';
+  const music=new window.DriftBgmPlayer([
+    {id:'slam-van',title:'Slam Van — The Spin Wires',durationSeconds:123.636349,url:new URL('music/slam-van.ogg?v='+VERSION,window.location.href).href},
+    {id:'time-bomb-remix',title:'Time Bomb — echo_orbit feat. Thespinwires',durationSeconds:186.048005,url:new URL('music/time-bomb-remix.ogg?v='+VERSION,window.location.href).href}
+  ],{
+    volume:0.35,fadeSeconds:2.5,
+    onState:value=>{
+      canvas.dataset.bgmTitle=value.title||'';
+      canvas.dataset.bgmIndex=String(value.index);
+      canvas.dataset.bgmTime=String(value.currentTime||0);
+      canvas.dataset.bgmDuration=String(value.duration||0);
+      canvas.dataset.bgmMediaDuration=String(value.mediaDuration||0);
+      canvas.dataset.bgmStatus=value.status;
+      canvas.dataset.bgmFade=String(value.fade||0);
+      canvas.dataset.bgmMuted=String(value.muted);
+    }
+  });
   function audioContext(){
     if(typeof SDL2!=='undefined'&&SDL2.audioContext)return SDL2.audioContext;
     return window.Module&&window.Module.audioContext||null;
@@ -99,6 +120,8 @@ a{color:#eee;text-underline-offset:2px}
   }
   function paused(){return desiredPause===null?!!state.paused:desiredPause;}
   function paintMenu(){
+    music.setMuted(!!window.driftLab.muted);
+    music.setPlaying(window.driftLab.started&&!paused()&&!state.finished&&!fatal&&!document.hidden);
     const wasHidden=overlay.hidden;
     const show=fatal||!window.driftLab.started||paused()||!!state.finished;
     overlay.hidden=!show;
@@ -185,6 +208,7 @@ a{color:#eee;text-underline-offset:2px}
   });
   window.addEventListener('blur',()=>requestPause('画面を離れたため一時停止しました。'));
   document.addEventListener('visibilitychange',()=>{if(document.hidden)requestPause('画面を離れたため一時停止しました。');});
+  window.addEventListener('pagehide',()=>music.setPlaying(false));
   // Menu keys must not reach SDL; keyup always passes so driving keys clear.
   window.addEventListener('keydown',event=>{
     if(event.code==='Digit1'||event.code==='Digit2'||event.code==='Numpad1'||event.code==='Numpad2'){event.preventDefault();event.stopImmediatePropagation();return;}
