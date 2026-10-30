@@ -120,12 +120,17 @@ void lifecycle() {
               "callback uses the actual signed16 stereo mixer format");
         check(live.engineSampleLoaded()==!live.enginePcm_.empty() && live.tireSampleLoaded()==!live.tirePcm_.empty(),
               "public sample status matches whichever optional engine and tire assets init could load");
+        int designed = 0;
+        for (const auto& shot : live.shots_) designed += !shot.empty();
+        check(live.shotsLoaded() == designed, "the effect count matches whichever designed files init could load");
         live.update(22.2f, 0.5f, 0.5f, 0, false);
         live.setMuted(true);
         live.shutdown();
         live.shutdown();
+        bool shotsFreed = live.shotsLoaded() == 0;
+        for (const auto& shot : live.shots_) shotsFreed = shotsFreed && shot.empty();
         check(!live.ready_ && !live.engineSampleLoaded() && !live.tireSampleLoaded() &&
-              live.enginePcm_.empty() && live.tirePcm_.empty(),
+              live.enginePcm_.empty() && live.tirePcm_.empty() && shotsFreed,
               "shutdown removes the callback before freeing sample buffers and closing the mixer");
     }
     Mix_CloseAudio();
@@ -1055,6 +1060,195 @@ void recordedLoops() {
 }
 } // namespace
 
+// Designed one-shots: injected PCM stands in for the decoded files.
+void designedShots() {
+    auto clip = [](float level, int frames) {
+        std::vector<float> pcm(static_cast<std::size_t>(frames) * channels);
+        for (int i = 0; i < frames; ++i) { pcm[2 * i] = level; pcm[2 * i + 1] = -level; }
+        return pcm;
+    };
+    auto levelOf = [](int shot) { return 0.05f + 0.005f * shot; };
+    auto quiet = [](DriftAudio& audio) {
+        audio.setLayerGains(0, 0);
+        audio.setWindGain(0);
+        audio.reset();
+        audio.update(30, 0.5f, 0, 0, false);
+        renderSeconds(audio, 0.3);
+    };
+    auto heard = [](const std::vector<Sint16>& pcm, float left, float right) {
+        const std::size_t at = pcm.size() / 2 & ~std::size_t(1);
+        return std::fabs(pcm[at] / 32767.0 - left) < 0.004 && std::fabs(pcm[at + 1] / 32767.0 - right) < 0.004;
+    };
+    DriftAudio audio;
+    for (int shot = 0; shot < DriftAudio::kShotCount; ++shot) audio.shots_[shot] = clip(levelOf(shot), 4410);
+    quiet(audio);
+    check(isSilence(renderSeconds(audio, 0.05)), "with the beds muted nothing plays before a cue");
+
+    // An item plays its chain step's pickup with the short rush of air.
+    const float air = levelOf(DriftAudio::kShotWhooshItem);
+    audio.cue(DriftAudio::Cue::Item, 3);
+    check(heard(renderFrames(audio, 256), levelOf(DriftAudio::kShotItem + 3) + air, -levelOf(DriftAudio::kShotItem + 3) - air),
+          "an item cue plays its chain step's file and the rush of air, keeping their stereo image");
+    renderSeconds(audio, 0.2);
+    audio.cue(DriftAudio::Cue::Item, 12);
+    check(heard(renderFrames(audio, 256), levelOf(DriftAudio::kShotItem + 7) + air, -levelOf(DriftAudio::kShotItem + 7) - air),
+          "long chains stay on the highest item step");
+    renderSeconds(audio, 0.2);
+    const DriftAudio::Cue cues[] = {DriftAudio::Cue::CountTick, DriftAudio::Cue::CountGo, DriftAudio::Cue::SectorBest,
+                                    DriftAudio::Cue::SectorSlower, DriftAudio::Cue::Lap, DriftAudio::Cue::Record};
+    const int files[] = {DriftAudio::kShotCountTick, DriftAudio::kShotCountGo, DriftAudio::kShotSectorBest,
+                         DriftAudio::kShotSectorSlower, DriftAudio::kShotLap, DriftAudio::kShotRecord};
+    bool mapped = true;
+    for (int i = 0; i < 6; ++i) {
+        audio.cue(cues[i]);
+        mapped = mapped && heard(renderFrames(audio, 256), levelOf(files[i]), -levelOf(files[i]));
+        renderSeconds(audio, 0.2);
+    }
+    check(mapped, "each time attack cue plays its own file");
+
+    // A release plays the rush of air and the level's afterfire; without the
+    // whoosh file it keeps the synthesized boost instead.
+    audio.setDriftState(0, 3, 1, 1.5f);
+    renderFrames(audio, 64);
+    int afterfire = 0, rush = 0;
+    for (const auto& voice : audio.voices_) {
+        afterfire += voice.shot == DriftAudio::kShotBoost + 2;
+        rush += voice.shot == DriftAudio::kShotWhooshBoost;
+    }
+    check(afterfire == 1 && rush == 1 && audio.boostCueTime_ < 0, "a release plays the rush of air and its level's afterfire");
+    audio.setDriftState(0, 0, 1, 0);
+    renderSeconds(audio, 1.0);
+    DriftAudio plain;
+    for (int shot = 0; shot < DriftAudio::kShotCount; ++shot) plain.shots_[shot] = clip(levelOf(shot), 4410);
+    plain.shots_[DriftAudio::kShotWhooshBoost].clear();
+    quiet(plain);
+    plain.setDriftState(0, 2, 1, 1.2f);
+    renderFrames(plain, 64);
+    check(plain.boostCueTime_ >= 0, "without the whoosh file a release uses the synthesized boost");
+
+    for (int i = 0; i < 20; ++i) audio.cue(DriftAudio::Cue::Item, i % 8);
+    renderFrames(audio, 64);
+    int busy = 0;
+    for (const auto& voice : audio.voices_) busy += voice.shot >= 0;
+    check(busy == DriftAudio::kVoices, "a burst of cues fills the voice pool without overflowing it");
+    audio.setMuted(true);
+    renderFrames(audio, 64);
+    busy = 0;
+    for (const auto& voice : audio.voices_) busy += voice.shot >= 0;
+    audio.setMuted(false);
+    renderSeconds(audio, 0.2);
+    check(busy == 0 && isSilence(renderSeconds(audio, 0.05)), "muting drops every playing effect for good");
+
+    // A missing file falls back to the synthesized cue.
+    DriftAudio partial;
+    for (int shot = 0; shot < DriftAudio::kShotCount; ++shot) partial.shots_[shot] = clip(levelOf(shot), 4410);
+    partial.shots_[DriftAudio::kShotLap].clear();
+    quiet(partial);
+    partial.cue(DriftAudio::Cue::Lap);
+    renderFrames(partial, 64);
+    bool tone = false;
+    for (const auto& t : partial.tones_) tone = tone || t.active;
+    int playing = 0;
+    for (const auto& voice : partial.voices_) playing += voice.shot >= 0;
+    check(tone && playing == 0, "without its file the lap cue uses the synthesized jingle");
+}
+
+// Charge, boost and item pushes rev the engine itself. A plain 300 Hz sine
+// stands in for the engine recording; its playback rate shows the revs.
+void engineAnswers() {
+    const int frames = 4410;
+    std::vector<float> engine(static_cast<std::size_t>(frames) * channels);
+    for (int i = 0; i < frames; ++i)
+        engine[2 * i] = engine[2 * i + 1] = 0.3f * static_cast<float>(std::sin(6.283185307179586 * 300.0 * i / rate));
+    auto make = [&](DriftAudio& audio) {
+        audio.enginePcm_ = engine;
+        audio.setLayerGains(1, 0);
+        audio.setWindGain(0);
+        audio.reset();
+        audio.update(30, 1, 0, 0, false);
+        audio.setDriftState(0, 0, 0, 0);
+        renderSeconds(audio, 0.6);
+    };
+    auto semis = [](const DriftAudio& audio) { return audio.fxSemis_; };
+    DriftAudio audio;
+    make(audio);
+    const float base = audio.enginePlaybackRate_;
+    check(std::fabs(semis(audio)) < 0.001f, "with nothing happening the engine runs at its normal note");
+
+    audio.setDriftState(1, 0, 0, 0);
+    renderSeconds(audio, 0.06);
+    const float blip = semis(audio);
+    renderSeconds(audio, 0.6);
+    const float one = semis(audio);
+    audio.setDriftState(3, 0, 0, 0);
+    renderSeconds(audio, 0.8);
+    const float three = semis(audio);
+    check(one > 1 && three > one + 2.5f, "each held charge level revs the engine higher");
+    check(blip > one + 1, "a level-up revs past its note and settles back to it");
+    check(audio.enginePlaybackRate_ > base * 1.3f && audio.fxDb_ > 2, "the held charge plays the engine faster and louder");
+
+    for (int i = 0; i < DriftAudio::kShotCount; ++i) audio.shots_[i] = std::vector<float>(rate * channels, 0.01f);
+    audio.setDriftState(0, 3, 1, 1.5f);
+    renderSeconds(audio, 0.12);
+    const float flare = semis(audio);
+    int whoosh = 0, afterfire = 0;
+    for (const auto& voice : audio.voices_) {
+        whoosh += voice.shot == DriftAudio::kShotWhooshBoost;
+        afterfire += voice.shot == DriftAudio::kShotBoost + 2;
+    }
+    check(flare > three + 1, "a release flares the engine above the held charge");
+    check(whoosh == 1 && afterfire == 1, "a release plays the rush of air and the afterfire for its level");
+    for (int i = 0; i < 20; ++i) { audio.setDriftState(0, 3, 1, 1.5f - 0.07f * i); renderSeconds(audio, 0.07); }
+    audio.setDriftState(0, 0, 1, 0);
+    renderSeconds(audio, 0.6);
+    check(std::fabs(semis(audio)) < 0.05f && std::fabs(audio.fxDb_) < 0.05f, "after the boost the engine is back on its normal note");
+
+    audio.cue(DriftAudio::Cue::Item, 0);
+    renderSeconds(audio, 0.05);
+    const float push = semis(audio);
+    int pickups = 0;
+    for (const auto& voice : audio.voices_) pickups += voice.shot == DriftAudio::kShotItem || voice.shot == DriftAudio::kShotWhooshItem;
+    check(push > 1 && pickups == 2, "an item revs the engine briefly, with its pickup sound and a short rush of air");
+    renderSeconds(audio, 2.5);
+    check(std::fabs(semis(audio)) < 0.05f, "an item's push dies away");
+
+    DriftAudio cut;
+    make(cut);
+    cut.setDriftState(2, 0, 0, 0);
+    renderSeconds(cut, 0.5);
+    cut.setDriftState(0, 2, 1, 1.2f);
+    renderSeconds(cut, 0.1);
+    cut.setDriftState(0, 0, 1, 0);
+    renderSeconds(cut, 0.5);
+    check(std::fabs(semis(cut)) < 0.05f, "a boost cut short by the brake drops the engine back at once");
+    cut.setDriftState(2, 0, 1, 0);
+    renderSeconds(cut, 0.3);
+    cut.setDriftState(0, 0, 1, 0);
+    renderSeconds(cut, 0.8);
+    check(std::fabs(semis(cut)) < 0.05f, "a lost charge lets the engine fall back");
+
+    // The tuning reaches the engine; files at their lowest setting stay silent.
+    DriftAudio tuned;
+    make(tuned);
+    DriftAudio::RevTuning t;
+    t.chargeSemis[0] = 6;
+    t.creepSemis = t.blipSemis = 0;
+    t.afterfireDb = t.boostWhooshDb = -30;
+    tuned.setRevTuning(t);
+    tuned.setDriftState(1, 0, 0, 0);
+    renderSeconds(tuned, 0.8);
+    check(std::fabs(semis(tuned) - 6) < 0.1f, "a level's tuned pitch is the one held");
+    for (int i = 0; i < DriftAudio::kShotCount; ++i) tuned.shots_[i] = std::vector<float>(rate * channels, 0.01f);
+    tuned.setDriftState(0, 1, 1, 1.0f);
+    renderSeconds(tuned, 0.05);
+    int files = 0;
+    for (const auto& voice : tuned.voices_) files += voice.shot >= 0;
+    check(files == 0, "a whoosh or afterfire at its lowest setting plays nothing");
+    tuned.setMuted(true);
+    renderSeconds(tuned, 0.3);
+    check(isSilence(renderSeconds(tuned, 0.05)) && tuned.fxBoostTime_ < 0, "muting drops a boost's flare");
+}
+
 int main() {
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) {
@@ -1078,9 +1272,11 @@ int main() {
     landingCues();
     recordedLoops();
     engineRevs();
+    designedShots();
+    engineAnswers();
     Mix_Quit();
     SDL_Quit();
     if (failures) return EXIT_FAILURE;
-    std::puts("audio tests passed: SDL lifecycle,60ms tire attack,180ms/75ms recovery,drivetrain pitch,acceleration rev flare,load/slip spectrum,finite kick+air tail,speed wind,one-shot landings,headroom,mute/pause,no stale cues,bounds,replay determinism,reset isolation");
+    std::puts("audio tests passed: SDL lifecycle,60ms tire attack,180ms/75ms recovery,drivetrain pitch,acceleration rev flare,load/slip spectrum,finite kick+air tail,speed wind,one-shot landings,headroom,mute/pause,no stale cues,bounds,replay determinism,reset isolation,designed one-shots and fallback,engine revs for charge, boost and items");
     return EXIT_SUCCESS;
 }

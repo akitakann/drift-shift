@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "presentation.hpp"
 
 #include <cmath>
@@ -963,7 +964,29 @@ void testRuntimeParameters() {
         {&FeelSettings::speedCueScale,0,2},{&FeelSettings::windGain,0,1.5f},
         {&FeelSettings::suspensionTravel,.05f,.45f},{&FeelSettings::maxLaunchSpeed,2,8},
         {&FeelSettings::airSteerControl,0,.8f},{&FeelSettings::engineRevScale,0,2},
-        {&FeelSettings::itemKickKmh,0,60},{&FeelSettings::momentFxScale,0,2},
+        {&FeelSettings::itemKickKmh,0,60},{&FeelSettings::itemChargeSeconds,0,1},{&FeelSettings::moveSpeedScale,.5f,2},{&FeelSettings::turnRateScale,.5f,2},
+        {&FeelSettings::chargeSemis1,-12,12},
+        {&FeelSettings::chargeSemis2,-12,12},
+        {&FeelSettings::chargeSemis3,-12,12},
+        {&FeelSettings::chargeDb1,-12,12},
+        {&FeelSettings::chargeDb2,-12,12},
+        {&FeelSettings::chargeDb3,-12,12},
+        {&FeelSettings::chargeBlipSemis,0,12},
+        {&FeelSettings::chargeBlipDb,0,12},
+        {&FeelSettings::chargeBlipTime,0.05f,1},
+        {&FeelSettings::chargeCreepSemis,0,6},
+        {&FeelSettings::boostSemis1,0,12},
+        {&FeelSettings::boostSemis2,0,12},
+        {&FeelSettings::boostSemis3,0,12},
+        {&FeelSettings::boostDb,-12,12},
+        {&FeelSettings::boostTime,0.4f,2.5f},
+        {&FeelSettings::itemRevSemis,0,12},
+        {&FeelSettings::itemRevDb,-12,12},
+        {&FeelSettings::itemRevTime,0.05f,1},
+        {&FeelSettings::boostWhooshDb,-30,12},
+        {&FeelSettings::itemWhooshDb,-30,12},
+        {&FeelSettings::itemPickupDb,-30,12},
+        {&FeelSettings::afterfireDb,-30,12},
         {&FeelSettings::engineRevReturn,.2f,1.5f},
     };
     for (const Bound& bound : bounds) {
@@ -973,10 +996,11 @@ void testRuntimeParameters() {
               "nonfinite saved parameters fall back to the individual default");
         candidate.*(bound.field) = -100;
         check(near(sanitizeFeelSettings(candidate).*(bound.field), bound.low), "each parameter enforces its lower bound");
-        candidate.*(bound.field) = 1000;
+        candidate.*(bound.field) = 1e6f;
         check(near(sanitizeFeelSettings(candidate).*(bound.field), bound.high), "each parameter enforces its upper bound");
         candidate.*(bound.field) = 0;
-        check(near(sanitizeFeelSettings(candidate).*(bound.field), bound.low), "zero-valued controls are preserved when zero is in range");
+        check(near(sanitizeFeelSettings(candidate).*(bound.field), std::clamp(0.0f, bound.low, bound.high)),
+              "zero-valued controls are preserved when zero is in range");
     }
 
     FeelSettings custom;

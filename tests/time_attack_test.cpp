@@ -190,13 +190,51 @@ void testSuzuka() {
 
     DashItems dash;
     dash.build(track);
-    check(dash.items.size() >= 40 && dash.items.size() % DashItems::kRowLength == 0, "dash rows of four line the lap");
-    int onRoad = 0;
+    const float limit = track.halfWidth - DashItems::kEdgeMargin;
+    int line = 0, weave = 0, inside = 0, outside = 0, onRoad = 0;
     for (const auto& item : dash.items) {
-        const TrackPose pose = track.query(item.position.x, item.position.z, item.position.y - DashItems::kHover);
-        onRoad += pose.found && std::fabs(pose.lateral) < 1.0f && std::fabs(item.position.y - DashItems::kHover - pose.centerY) < 0.5f;
+        const TrackPose pose = track.query(item.position.x, item.position.z, item.position.y - DashItems::kHover, item.s);
+        const float surface = pose.centerY + pose.cross * pose.lateral;
+        onRoad += pose.found && std::fabs(pose.lateral) <= limit + 0.3f &&
+                  std::fabs(item.position.y - DashItems::kHover - surface) < 0.5f;
+        if (item.kind == DashItems::Kind::Line) {
+            ++line;
+            inside += item.lateral > 0.5f * limit;
+            outside += item.lateral < -0.5f * limit;
+        } else {
+            ++weave;
+        }
     }
-    check(onRoad == int(dash.items.size()), "every dash cell floats over the middle of the road");
+    check(dash.items.size() >= 100 && dash.items.size() <= 200, "a lap carries a readable number of cells");
+    check(line >= 60 && weave >= 30, "cells trace the bends and line the long straights");
+    check(onRoad == int(dash.items.size()), "every cell floats over the road, clear of its edges");
+    check(inside >= 15 && outside >= 15, "the bend lines swing across the road, not down its middle");
+    float worstLine = 0;
+    for (std::size_t i = 0; i < track.samples.size(); ++i) worstLine = std::fmax(worstLine, std::fabs(dash.line[i]));
+    check(dash.line.size() == track.samples.size() && worstLine <= limit + 0.001f, "the drifting line stays on the road");
+
+    // Cells never bunch up, and the rows on a straight switch sides far apart.
+    float closest = 1e9f;
+    for (std::size_t i = 1; i < dash.items.size(); ++i) closest = std::fmin(closest, dash.items[i].s - dash.items[i - 1].s);
+    check(closest >= 10, "cells along the lap keep at least 10 m apart");
+    int rows = 0, switches = 0;
+    float lastRowS = -1e9f, lastSide = 0, tightest = 1e9f;
+    for (const auto& item : dash.items) {
+        if (item.kind != DashItems::Kind::Weave) { lastRowS = -1e9f; continue; }
+        if (item.s - lastRowS > DashItems::kWeaveSpacing * 1.5f) {
+            const float side = item.lateral > 0 ? 1.0f : -1.0f;
+            if (lastRowS > -1e8f) {
+                tightest = std::fmin(tightest, item.s - lastRowS);
+                switches += side != lastSide;
+            }
+            lastSide = side;
+            ++rows;
+        }
+        lastRowS = item.s;
+    }
+    check(rows >= 10 && switches >= rows / 2, "rows on the straights alternate sides");
+    check(tightest >= DashItems::kWeavePitch - DashItems::kWeaveSpacing * (DashItems::kWeaveRow - 1) - 1,
+          "the next row is far enough along to steer across to it");
 }
 
 void testPickupAndPush() {
@@ -242,7 +280,71 @@ void testPickupAndPush() {
     check(!dash.items[0].taken && !dash.items[1].taken, "a new lap brings every cell back");
     car.reset(area);
     check(car.itemKickTime < 0 && car.itemKickBonus == 0, "reset clears a push");
+
+    // Outside a drift a cell leaves the charge alone; inside a held drift it adds a step.
+    for (int i = 0; i < 300; ++i) car.update(1.0f / 60.0f, cruise, area);
+    auto cellAtCar = [&] {
+        DashItems::Item cell;
+        cell.position = {car.x, car.y + DashItems::kHover, car.z};
+        dash.items = {cell};
+        return dash.update(1.0f / 60.0f, car).size();
+    };
+    const float idleCharge = car.driftCharge;
+    check(cellAtCar() == 1 && car.driftCharge == idleCharge, "a cell on a straight only pushes");
+    DriveInput slide = cruise;
+    slide.handbrake = 1;
+    slide.steer = 1;
+    for (int i = 0; i < 40 && !(car.driftHeld && car.driftHoldActive); ++i) car.update(1.0f / 60.0f, slide, area);
+    check(car.driftHeld && car.driftHoldActive, "holding the drift button with steer starts a held drift");
+    const float heldCharge = car.driftCharge;
+    check(cellAtCar() == 1 && near(car.driftCharge - heldCharge, settings.itemChargeSeconds, 0.0001f),
+          "a cell taken in a held drift adds its step of charge");
+    car.driftCharge = 2.1f;
+    cellAtCar();
+    check(near(car.driftCharge, 2.2f, 0.0001f) && car.driftChargeLevel == 3, "item charge stops at the top level");
 }
+// Movement speed covers more ground at the same speed readout; turning ease
+// turns the same steering into a tighter turn. Both start from a car at speed.
+void testTravelScales() {
+    Track area;
+    area.makePracticeArea();
+    auto atSpeed = [&](FeelSettings settings) {
+        Car car;
+        car.reset(area);
+        car.applyTuning(settings);
+        DriveInput cruise;
+        cruise.throttle = 1;
+        for (int i = 0; i < 600; ++i) car.update(1.0f / 60.0f, cruise, area);
+        return car;
+    };
+    auto travel = [&](Car car) {
+        DriveInput cruise;
+        cruise.throttle = 1;
+        const float x = car.x, z = car.z;
+        for (int i = 0; i < 60; ++i) car.update(1.0f / 60.0f, cruise, area);
+        return std::sqrt((car.x - x) * (car.x - x) + (car.z - z) * (car.z - z));
+    };
+    auto turn = [&](Car car) {
+        DriveInput steer;
+        steer.throttle = 1;
+        steer.steer = 1;
+        const float yaw = car.yaw;
+        for (int i = 0; i < 30; ++i) car.update(1.0f / 60.0f, steer, area);
+        return std::fabs(wrapPi(car.yaw - yaw));
+    };
+    FeelSettings plain;
+    FeelSettings fast = plain;
+    fast.moveSpeedScale = 1.45f;
+    const Car slowCar = atSpeed(plain), fastCar = atSpeed(fast);
+    check(near(fastCar.speed, slowCar.speed, 0.01f), "movement speed leaves the speed and its readout alone");
+    check(near(travel(fastCar) / travel(slowCar), 1.45f, 0.01f), "movement speed covers that much more ground");
+    check(near(turn(fastCar), turn(slowCar), 0.001f), "movement speed alone turns at the same rate, so arcs widen");
+    FeelSettings easy = fast;
+    easy.turnRateScale = 1.15f;
+    const Car easyCar = atSpeed(easy);
+    check(near(turn(easyCar) / turn(fastCar), 1.15f, 0.02f), "turning ease turns the same steering that much more");
+}
+
 void testMoments() {
     Moments moments;
     check(moments.timeScale() == 1 && moments.flash == 0 && moments.edge == 0, "between moments the view is untouched");
@@ -275,8 +377,9 @@ int main() {
     testNoShortcuts();
     testSuzuka();
     testPickupAndPush();
+    testTravelScales();
     testMoments();
     if (failures) return EXIT_FAILURE;
-    std::puts("time attack tests passed: countdown, splits, laps, records, no shortcuts, Suzuka splits, dash rows and pushes");
+    std::puts("time attack tests passed: countdown, splits, laps, records, no shortcuts, Suzuka splits, drift lines, weave rows, pushes, item charge, movement speed and turning ease");
     return EXIT_SUCCESS;
 }

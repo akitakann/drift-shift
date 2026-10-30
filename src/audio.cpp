@@ -5,12 +5,24 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace {
 constexpr double kTau = 6.283185307179586;
 constexpr float kBoostVoiceDurations[] = {0, 0.35f, 0.50f, 0.65f};
 constexpr float kChargeAirDurations[] = {0, 0.080f, 0.100f, 0.130f};
 constexpr float kChargeAirGain = 0.10f;
+// The engine's answer to a release lasts this long per level, scaled by
+// RevTuning::boostTime; it rises in kFxRise and settles over the rest.
+constexpr float kFxBoostDuration[] = {0.0f, 0.7f, 0.85f, 1.0f};
+constexpr float kFxRise = 0.10f;
+constexpr float kFxBoostWhoosh[] = {0.0f, 0.8f, 0.9f, 1.0f}; // Whoosh level per release level.
+float semitones(float semis) { return std::exp2(semis / 12.0f); }
+float decibels(float db) { return std::pow(10.0f, db / 20.0f); }
+float smoothstep01(float t) {
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    return t * t * (3 - 2 * t);
+}
 float limit(float value, float low, float high) {
     if (!std::isfinite(value)) return low;
     return std::max(low, std::min(high, value));
@@ -46,6 +58,8 @@ bool DriftAudio::init() {
     }
     loadSampleLoops(SDL_RWFromFile("assets/audio/engine-c.wav", "rb"),
                     SDL_RWFromFile("assets/audio/tire-a.wav", "rb"));
+    loadShots("assets/audio/sfx");
+    if (shotsLoaded() < kShotCount) SDL_Log("%d of %d effect files loaded; the rest are synthesized", shotsLoaded(), int(kShotCount));
     if (!engineSampleLoaded()) SDL_Log("Engine loop unavailable; using synthesized engine fallback");
     if (!tireSampleLoaded()) SDL_Log("Tire loop unavailable; using synthesized tire fallback");
     reset();
@@ -61,6 +75,71 @@ void DriftAudio::cue(Cue which, int step) {
     cueWrite_.store(write + 1, std::memory_order_release);
 }
 
+const char* DriftAudio::shotName(int shot) {
+    static const char* const names[kShotCount] = {
+        "item_0", "item_1", "item_2", "item_3", "item_4", "item_5", "item_6", "item_7",
+        "boost_1", "boost_2", "boost_3", "whoosh_item", "whoosh_boost",
+        "count_tick", "count_go", "sector_best", "sector_slower", "lap", "record"};
+    return shot >= 0 && shot < kShotCount ? names[shot] : "";
+}
+
+void DriftAudio::loadShots(const char* directory) {
+    // Like the loops: decoded before the callback is installed, never after.
+    int loaded = 0;
+    for (int shot = 0; shot < kShotCount; ++shot) {
+        const std::string path = std::string(directory) + "/" + shotName(shot) + ".ogg";
+        if (loadLoop(SDL_RWFromFile(path.c_str(), "rb"), shots_[shot])) ++loaded;
+    }
+    shotsLoaded_.store(loaded, std::memory_order_release);
+}
+
+void DriftAudio::setRevTuning(const RevTuning& t) {
+    const float values[kRevFields] = {
+        t.chargeSemis[0], t.chargeSemis[1], t.chargeSemis[2], t.chargeDb[0], t.chargeDb[1], t.chargeDb[2],
+        t.blipSemis, t.blipDb, t.blipTime, t.creepSemis, t.boostSemis[0], t.boostSemis[1], t.boostSemis[2],
+        t.boostDb, t.boostTime, t.itemSemis, t.itemDb, t.itemTime, t.boostWhooshDb, t.itemWhooshDb, t.pickupDb,
+        t.afterfireDb};
+    for (int i = 0; i < kRevFields; ++i) revTuning_[i].store(values[i], std::memory_order_relaxed);
+}
+
+DriftAudio::RevTuning DriftAudio::loadRevTuning() const {
+    float v[kRevFields];
+    for (int i = 0; i < kRevFields; ++i) v[i] = revTuning_[i].load(std::memory_order_relaxed);
+    RevTuning t;
+    for (int k = 0; k < 3; ++k) {
+        t.chargeSemis[k] = limit(v[k], -12, 12);
+        t.chargeDb[k] = limit(v[3 + k], -12, 12);
+        t.boostSemis[k] = limit(v[10 + k], 0, 12);
+    }
+    t.blipSemis = limit(v[6], 0, 12);
+    t.blipDb = limit(v[7], 0, 12);
+    t.blipTime = limit(v[8], 0.02f, 2);
+    t.creepSemis = limit(v[9], 0, 6);
+    t.boostDb = limit(v[13], -12, 12);
+    t.boostTime = limit(v[14], 0.2f, 3);
+    t.itemSemis = limit(v[15], 0, 12);
+    t.itemDb = limit(v[16], -12, 12);
+    t.itemTime = limit(v[17], 0.02f, 2);
+    t.boostWhooshDb = limit(v[18], -40, 12);
+    t.itemWhooshDb = limit(v[19], -40, 12);
+    t.pickupDb = limit(v[20], -40, 12);
+    t.afterfireDb = limit(v[21], -40, 12);
+    return t;
+}
+
+// Callback only. Plays a designed effect if its file loaded; a busy pool gives
+// up the voice that is furthest through its sound.
+bool DriftAudio::startShot(int shot, bool boost, float gain) {
+    if (shot < 0 || shot >= kShotCount || shots_[shot].empty()) return false;
+    Voice* chosen = nullptr;
+    for (auto& voice : voices_) {
+        if (voice.shot < 0) { chosen = &voice; break; }
+        if (!chosen || voice.frame > chosen->frame) chosen = &voice;
+    }
+    *chosen = Voice{shot, 0, boost, gain};
+    return true;
+}
+
 void DriftAudio::addTone(float delay, float length, float hz, float gain, float bright) {
     for (auto& tone : tones_) {
         if (tone.active) continue;
@@ -70,8 +149,17 @@ void DriftAudio::addTone(float delay, float length, float hz, float gain, float 
 }
 
 // Each cue is a few bell-like tones on a C major scale, kept above the engine.
-void DriftAudio::startCue(int type, int step) {
+void DriftAudio::startCue(int type, int step, const RevTuning& tuning) {
     static const int scale[] = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21};
+    if (Cue(type) == Cue::Item) {
+        // The push is heard in the engine and the air; the pickup is its own sound.
+        fxItemTime_ = 0;
+        if (tuning.itemWhooshDb > -30) startShot(kShotWhooshItem, false, decibels(tuning.itemWhooshDb));
+        if (tuning.pickupDb <= -30 || startShot(kShotItem + std::max(0, std::min(7, step)), false, decibels(tuning.pickupDb)))
+            return;
+    }
+    const int designed[] = {kShotCountTick, kShotCountGo, -1, kShotSectorBest, kShotSectorSlower, kShotLap, kShotRecord};
+    if (type >= 0 && type < int(sizeof(designed) / sizeof(designed[0])) && designed[type] >= 0 && startShot(designed[type])) return;
     switch (Cue(type)) {
     case Cue::CountTick: addTone(0, 0.16f, 659.26f, 0.11f, 0.45f); break;
     case Cue::CountGo:
@@ -237,6 +325,8 @@ void DriftAudio::shutdown() {
     tireSampleLoaded_.store(false, std::memory_order_release);
     std::vector<float>().swap(enginePcm_);
     std::vector<float>().swap(tirePcm_);
+    for (auto& shot : shots_) std::vector<float>().swap(shot);
+    shotsLoaded_.store(0, std::memory_order_release);
 }
 
 void DriftAudio::postMix(void* userdata, std::uint8_t* stream, int length) {
@@ -280,6 +370,14 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
         random_ = 0x8e4d6a39;
         seenBankSerial_ = bankSerial_.load(std::memory_order_acquire);
         for (auto& tone : tones_) tone.active = false;
+        for (auto& voice : voices_) voice.shot = -1;
+        shotBoostGate_ = 0;
+        fxSemis_ = fxDb_ = 0;
+        fxLevel_ = chargeLevel_.load(std::memory_order_relaxed);
+        fxLevelAge_ = 10;
+        fxBoostTime_ = fxItemTime_ = -1;
+        fxBoostFromSemis_ = fxBoostFromDb_ = 0;
+        fxBoostLevel_ = 0;
     }
     const double dt = 1.0 / sampleRate_;
     const float smooth = 1.0f - std::exp(-static_cast<float>(dt) * 20.0f);
@@ -310,16 +408,20 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     const int boostLevel = boostLevel_.load(std::memory_order_relaxed);
     const float boostRemaining = boostRemaining_.load(std::memory_order_relaxed);
     const bool suppressCue = silent || gain <= 0;
+    const RevTuning rt = loadRevTuning();
     {
         // Drain the jingle queue. Cues raised while silent are dropped, not delayed.
         const unsigned write = cueWrite_.load(std::memory_order_acquire);
         unsigned read = cueRead_.load(std::memory_order_relaxed);
         for (; read != write; ++read) {
             const CueEvent event = cueQueue_[read % kCueQueue];
-            if (!suppressCue) startCue(event.type, event.step);
+            if (!suppressCue) startCue(event.type, event.step, rt);
         }
         cueRead_.store(read, std::memory_order_release);
-        if (suppressCue) for (auto& tone : tones_) tone.active = false;
+        if (suppressCue) {
+            for (auto& tone : tones_) tone.active = false;
+            for (auto& voice : voices_) voice.shot = -1;
+        }
     }
     const float landingImpact = pendingLandingImpact_.exchange(0, std::memory_order_acquire);
     if (suppressCue) {
@@ -351,7 +453,9 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     // recover. Ordinary sliding and cancelled exits keep their original release.
     const float driftReleaseTime = boostActive ? 0.075f : 0.180f;
     const float driftRelease = 1.0f - std::exp(-static_cast<float>(dt) * 2.302585f / driftReleaseTime);
-    if (chargeLevel > seenChargeLevel_ && !suppressCue) {
+    // With the engine recording, the engine itself revs for each charge level
+    // (below); the short pressure puffs remain for the synthesized engine.
+    if (chargeLevel > seenChargeLevel_ && !suppressCue && !recordedEngine) {
         chargeCueLevel_ = chargeLevel;
         chargeCueTime_ = 0;
         chargeAirLow_ = chargeAirHigh_ = 0;
@@ -364,6 +468,20 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     } else if (boostSerial != seenBoostSerial_) {
         seenBoostSerial_ = boostSerial;
         if (!suppressCue && boostLevel > 0 && boostRemaining > 0) {
+            // The engine flares from wherever the charge left it (below).
+            fxBoostTime_ = 0;
+            fxBoostLevel_ = boostLevel;
+            fxBoostFromSemis_ = fxSemis_;
+            fxBoostFromDb_ = fxDb_;
+        }
+        if (!suppressCue && boostLevel > 0 && boostRemaining > 0 && !shots_[kShotWhooshBoost].empty()) {
+            // The rush of air, and the afterfire for the level, ride with it.
+            if (rt.boostWhooshDb > -30)
+                startShot(kShotWhooshBoost, true, kFxBoostWhoosh[boostLevel] * decibels(rt.boostWhooshDb));
+            if (rt.afterfireDb > -30) startShot(kShotBoost + boostLevel - 1, true, decibels(rt.afterfireDb));
+            chargeCueTime_ = -1;
+            shotBoostGate_ = 1;
+        } else if (!suppressCue && boostLevel > 0 && boostRemaining > 0) {
             boostCueLevel_ = boostLevel;
             boostCueTime_ = 0;
             boostCueDuration_ = std::min(boostRemaining, kBoostVoiceDurations[boostLevel]);
@@ -373,6 +491,7 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
         }
     }
     if (suppressCue) {
+        fxBoostTime_ = fxItemTime_ = -1;
         chargeCueTime_ = boostCueTime_ = -1;
         boostTail_ = boostVoiceGate_ = 0;
         bankTime_ = -1;
@@ -383,6 +502,14 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     const float boostNoiseCoeff = 1.0f - std::exp(-static_cast<float>(dt) * 1800.0f * float(kTau));
     const float boostLowCoeff = 1.0f - std::exp(-static_cast<float>(dt) * 280.0f * float(kTau));
     const float boostGateSmooth = 1.0f - std::exp(-static_cast<float>(dt) * 2.302585f / 0.008f);
+    // A cancelled boost (brake, barrier) fades its designed sound out quickly.
+    const float shotGateSmooth = 1.0f - std::exp(-static_cast<float>(dt) * 2.302585f / 0.060f);
+    // The engine's offsets rise quickly and fall back more slowly, as revs do.
+    const float fxUp = 1.0f - std::exp(-static_cast<float>(dt) * 2.302585f / 0.025f);
+    const float fxDown = 1.0f - std::exp(-static_cast<float>(dt) * 2.302585f / 0.150f);
+    const int fxHeld = suppressCue ? 0 : chargeLevel;
+    if (fxHeld > fxLevel_) fxLevelAge_ = 0; // Each level-up revs again.
+    fxLevel_ = fxHeld;
     // A little pitch fall at each shift gives acceleration a rhythmic pulse.
     // The temporary road-speed pulse is not a gear shift. Keep the drivetrain
     // pitch/load stable while tires and the air voice still use the real speed.
@@ -412,11 +539,50 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
     Sint16* samples = reinterpret_cast<Sint16*>(stream);
     const int frames = length / (static_cast<int>(sizeof(Sint16)) * channels_);
     for (int frame = 0; frame < frames; ++frame) {
+        {
+            // How far the engine is revved past its normal note, and how much
+            // louder: the held charge, a release, an item's push.
+            float semis = 0, db = 0;
+            if (fxBoostTime_ >= 0) {
+                // A release: up from where the charge left it, then down onto
+                // the normal note as the boost runs out. A cut-short boost drops back.
+                const float duration = kFxBoostDuration[fxBoostLevel_] * rt.boostTime;
+                const float t = fxBoostTime_;
+                const float rise = smoothstep01(t / kFxRise);
+                const float settle = smoothstep01((t - kFxRise) / (duration - kFxRise));
+                const float peak = rt.boostSemis[fxBoostLevel_ - 1];
+                semis = (fxBoostFromSemis_ + (peak - fxBoostFromSemis_) * rise) * (1 - settle);
+                db = (fxBoostFromDb_ + (rt.boostDb - fxBoostFromDb_) * rise) * (1 - settle);
+                if (!boostActive) semis = db = 0;
+                fxBoostTime_ += static_cast<float>(dt);
+                if (fxBoostTime_ >= duration) fxBoostTime_ = -1;
+            } else if (fxLevel_ > 0) {
+                // "Bwo": past the level's note and back; "ooon": easing up while held.
+                const float t = fxLevelAge_;
+                const float blip = smoothstep01(t / 0.06f) * std::exp(-std::max(0.0f, t - 0.06f) / rt.blipTime);
+                semis = rt.chargeSemis[fxLevel_ - 1] + rt.blipSemis * blip + rt.creepSemis * (1 - std::exp(-t / 1.2f));
+                db = rt.chargeDb[fxLevel_ - 1] + rt.blipDb * blip;
+                fxLevelAge_ += static_cast<float>(dt);
+            }
+            if (fxItemTime_ >= 0) {
+                const float t = fxItemTime_;
+                const float push = smoothstep01(t / 0.04f) * std::exp(-std::max(0.0f, t - 0.04f) / rt.itemTime);
+                semis += rt.itemSemis * push;
+                db += rt.itemDb * push;
+                fxItemTime_ += static_cast<float>(dt);
+                if (t > 0.04f + 6 * rt.itemTime) fxItemTime_ = -1;
+            }
+            fxSemis_ += (semis - fxSemis_) * (semis > fxSemis_ ? fxUp : fxDown);
+            fxDb_ += (db - fxDb_) * (db > fxDb_ ? fxUp : fxDown);
+        }
+        // Only the engine recording revs; the synthesized fallback keeps its own cues.
+        const float fxPitch = recordedEngine ? semitones(fxSemis_) : 1.0f;
+        const float fxGain = recordedEngine ? decibels(fxDb_) : 1.0f;
         pitch_ += (targetPitch - pitch_) * smooth;
         engineLevel_ += (targetEngine - engineLevel_) * smooth;
         engineSampleRate_ += (targetEngineRate - engineSampleRate_) * smooth;
         engineRevLevel_ += (targetRev - engineRevLevel_) * (targetRev > engineRevLevel_ ? revAttack : revRelease);
-        enginePlaybackRate_ = limit(engineSampleRate_ + engineRevLevel_ * revScale * 0.22f, 0.75f, 2.16f);
+        enginePlaybackRate_ = limit((engineSampleRate_ + engineRevLevel_ * revScale * 0.22f) * fxPitch, 0.6f, 3.6f);
         tireSampleRate_ += (targetTireRate - tireSampleRate_) * smooth;
         engineMixGain_ += (engineGain - engineMixGain_) * smooth;
         tireMixGain_ += (tireGain - tireMixGain_) * smooth;
@@ -514,13 +680,28 @@ void DriftAudio::render(std::uint8_t* stream, int length) {
             boostCueTime_ += static_cast<float>(dt);
         }
         const float effects = crash + cue + chargeCue + boostCue + wind + landing + renderTones(dt);
+        // Designed one-shots keep their stereo image.
+        float shot[2] = {0, 0};
+        shotBoostGate_ += ((boostActive ? 1.0f : 0.0f) - shotBoostGate_) * shotGateSmooth;
+        for (auto& voice : voices_) {
+            if (voice.shot < 0) continue;
+            const std::vector<float>& pcm = shots_[voice.shot];
+            const std::size_t frames = pcm.size() / static_cast<std::size_t>(channels_);
+            if (voice.frame >= frames || (voice.boost && shotBoostGate_ < 0.001f)) { voice.shot = -1; continue; }
+            const float level = (voice.boost ? shotBoostGate_ : 1.0f) * voice.gain;
+            const std::size_t at = voice.frame * static_cast<std::size_t>(channels_);
+            shot[0] += pcm[at] * level;
+            shot[1] += pcm[at + (channels_ > 1 ? 1 : 0)] * level;
+            ++voice.frame;
+        }
         for (int channel = 0; channel < channels_; ++channel) {
             // Preserve the recordings' converted channel image. Only fallback
             // tire synthesis needs the original small artificial stereo spread.
             const float spread = (channel & 1) ? 0.96f : 1.04f;
-            const float engine = recordedEngine ? loopSample(enginePcm_, engineFrames, channels_, engineSamplePosition_, channel) * engineLevel_ * 4.0f : synthesizedEngine;
+            const float engine = recordedEngine ? loopSample(enginePcm_, engineFrames, channels_, engineSamplePosition_, channel) * engineLevel_ * fxGain * 4.0f : synthesizedEngine;
             const float tire = recordedTire ? loopSample(tirePcm_, tireFrames, channels_, tireSamplePosition_, channel) * driftLevel_ * 0.45f : synthesizedTire * spread;
-            const float value = (engine * engineMixGain_ * (1 + engineRevLevel_ * revScale * 0.06f) + tire * tireMixGain_ + effects) * gate_;
+            const float value = (engine * engineMixGain_ * (1 + engineRevLevel_ * revScale * 0.06f) + tire * tireMixGain_ + effects +
+                                 shot[channel & 1]) * gate_;
             const int index = frame * channels_ + channel;
             const float mixed = float(samples[index]) + value * gain * 32767.0f;
             samples[index] = static_cast<Sint16>(limit(mixed, -29203, 29203)); // -1 dBFS headroom

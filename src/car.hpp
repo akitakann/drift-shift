@@ -37,7 +37,15 @@ struct Car {
     float boostSpeedBonus = 0; // speedに含まれる一時的な上乗せ。通常の駆動速度とは分ける
     float itemKickTime = -1;   // Elapsed time of an item push; negative when idle.
     float itemKickBonus = 0;   // Push speed currently included in speed, m/s.
-    float itemKickPeak = 30.0f / 3.6f; // Tuning: peak push of one item, m/s. reset preserves it.
+    float itemKickPeak = 18.0f / 3.6f; // Tuning: peak push of one item, m/s. reset preserves it.
+    float itemChargeSeconds = 0.3f;    // Tuning: charge one item adds while a drift is held, s. reset preserves it.
+    // Tuning: ground covered per unit of speed. Above 1 the car travels faster
+    // through the world while speed, its readout and its sound stay as they
+    // were; turns at the same rate sweep wider arcs. reset preserves it.
+    float moveScale = 1;
+    // Tuning: how quickly the same steering turns the car, grip and drift alike.
+    // Above 1, turns at a given input are tighter. reset preserves it.
+    float turnScale = 1;
     int boostLevel = 0;       // ブースト継続中の段階（0..3）
     unsigned boostSerial = 0; // 有効な解放ごとに一度だけ増える演出用番号
     float boostSpeedScale = 1; // 調整値。resetで保持
@@ -97,8 +105,9 @@ struct Car {
     void rescaleWorld(float ratio, const Track& track);
     TrackPose querySupport(const Track& track, float worldX, float worldZ) const;
     float boostEnvelopeAmount() const;
-    // Item pickup: a short push on top of the drive speed. A new pickup restarts
-    // it rather than stacking; braking, a barrier or leaving the asphalt ends it.
+    // Item pickup: a short push on top of the drive speed, and while a drift is
+    // held, a step of charge. A new pickup restarts the push rather than
+    // stacking; braking, a barrier or leaving the asphalt ends it.
     void addKick();
     void update(float dt, const DriveInput& input, const Track& track);
 

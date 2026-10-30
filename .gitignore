@@ -7,3 +7,4 @@
 /public/
 /_site/
 /CMakeUserPresets.json
+__pycache__/

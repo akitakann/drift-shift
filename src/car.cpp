@@ -33,6 +33,12 @@ constexpr float kWallKeep = 0.55f;   // Share of the pre-impact speed a wall gla
 constexpr float kWallAlign = 14.0f;  // Rate at which a nose-in body swings along the wall, 1/s.
 constexpr float kWallMaxAngle = 25.0f * 3.14159265f / 180.0f; // Sharpest nose-in pose kept on contact.
 
+int chargeLevelOf(float charge) {
+    return charge + 0.00001f >= kChargeThresholds[3] ? 3 :
+           (charge + 0.00001f >= kChargeThresholds[2] ? 2 :
+            (charge + 0.00001f >= kChargeThresholds[1] ? 1 : 0));
+}
+
 float maxSteerAt(float speed) {
     return 0.46f / (1.0f + std::fabs(speed) * 0.085f);
 }
@@ -208,14 +214,14 @@ void Car::reset(const Track& track) {
 
 void Car::stepGrip(float dt) {
     driftTravelRate = 0;
-    yawRate = gripYawRate(speed, steerAngle);
+    yawRate = gripYawRate(speed, steerAngle) * turnScale;
     yaw = wrapPi(yaw + yawRate * dt);
     travelYaw = yaw;
     slipAngle = 0;
     driftIntensity = 0;
 
-    x += std::sin(yaw) * speed * dt;
-    z += std::cos(yaw) * speed * dt;
+    x += std::sin(yaw) * speed * moveScale * dt;
+    z += std::cos(yaw) * speed * moveScale * dt;
 }
 
 void Car::stepDrift(float dt, const DriveInput& input) {
@@ -224,7 +230,7 @@ void Car::stepDrift(float dt, const DriveInput& input) {
     if (releaseEaseActive) {
         if (releaseUsesCameraHeading) {
             const float previousYaw = yaw;
-            const float steeringTurn = gripYawRate(speed, steerAngle) * dt;
+            const float steeringTurn = gripYawRate(speed, steerAngle) * turnScale * dt;
             releaseHeading = wrapPi(releaseHeading + steeringTurn);
             releaseEaseElapsed = std::fmin(releaseEaseElapsed + dt, releaseDirectionTime);
             const float remaining = std::fmax(1.0f - releaseEaseElapsed / releaseDirectionTime, 0.0f);
@@ -236,8 +242,8 @@ void Car::stepDrift(float dt, const DriveInput& input) {
             yawRate = wrapPi(yaw - previousYaw) / dt;
             slipAngle = wrapPi(yaw - travelYaw);
             driftIntensity = slipFeedback(speed, slipAngle, onAsphalt);
-            x += std::sin(travelYaw) * speed * dt;
-            z += std::cos(travelYaw) * speed * dt;
+            x += std::sin(travelYaw) * speed * moveScale * dt;
+            z += std::cos(travelYaw) * speed * moveScale * dt;
             if (remaining < 0.00001f) {
                 releaseEaseActive = false;
                 releaseEaseSlip = releaseEaseElapsed = releaseTravelOffset = 0;
@@ -250,7 +256,7 @@ void Car::stepDrift(float dt, const DriveInput& input) {
             return;
         }
         // 車体は通常の操舵で進める。古い慣性だけを短く減衰させ、車体を巻き戻さない。
-        yawRate = gripYawRate(speed, steerAngle);
+        yawRate = gripYawRate(speed, steerAngle) * turnScale;
         yaw = wrapPi(yaw + yawRate * dt);
         releaseEaseElapsed = std::fmin(releaseEaseElapsed + dt, kReleaseEaseDuration);
         const float remaining = std::fmax(1.0f - releaseEaseElapsed / kReleaseEaseDuration, 0.0f);
@@ -258,8 +264,8 @@ void Car::stepDrift(float dt, const DriveInput& input) {
         slipAngle = releaseEaseSlip * driftBlend;
         travelYaw = wrapPi(yaw - slipAngle);
         driftIntensity = slipFeedback(speed, slipAngle, onAsphalt);
-        x += std::sin(travelYaw) * speed * dt;
-        z += std::cos(travelYaw) * speed * dt;
+        x += std::sin(travelYaw) * speed * moveScale * dt;
+        z += std::cos(travelYaw) * speed * moveScale * dt;
         if (remaining < 0.00001f) {
             releaseEaseActive = false;
             releaseEaseSlip = releaseEaseElapsed = 0;
@@ -291,7 +297,7 @@ void Car::stepDrift(float dt, const DriveInput& input) {
         const float inside = steer * driftDirection;
         const float responseTime = driftSteerResponse * (driftModel == DriftModel::Inertia ? 1.6f : 1.0f);
         const float lineResponse = 1 - std::exp(-2.302585093f * dt / responseTime);
-        travelTurn = previousTravelRate + (steer * driftSteerRate - previousTravelRate) * lineResponse;
+        travelTurn = previousTravelRate + (steer * driftSteerRate * turnScale - previousTravelRate) * lineResponse;
         travelTurn = clampf(travelTurn, -3.0f, 3.0f);
         const float signedSlip = slipAngle * driftDirection;
         float relativeTarget;
@@ -313,7 +319,7 @@ void Car::stepDrift(float dt, const DriveInput& input) {
         driftKick = 0;
         // 衝突・失効後は速度が車の向きへ追いつく。車体だけを古い進路へ戻さない。
         // 維持中の旋回は短く引き継ぎ、入力があれば通常の操舵へ移る。
-        const float gripTurn = (speed / kWheelbase) * std::tan(steerAngle);
+        const float gripTurn = (speed / kWheelbase) * std::tan(steerAngle) * turnScale;
         driftTravelRate += (gripTurn - driftTravelRate) * (1.0f - std::exp(-15.0f * dt));
         const float catchTurn = slipAngle * recoveryRate;
         travelTurn = driftTravelRate + 0.85f * catchTurn;
@@ -351,8 +357,8 @@ void Car::stepDrift(float dt, const DriveInput& input) {
         driftKick = 0;
     }
     driftIntensity = slipFeedback(speed, slipAngle, onAsphalt);
-    x += std::sin(travelYaw) * speed * dt;
-    z += std::cos(travelYaw) * speed * dt;
+    x += std::sin(travelYaw) * speed * moveScale * dt;
+    z += std::cos(travelYaw) * speed * moveScale * dt;
 
     if ((!powered && std::fabs(slipAngle) < 0.01f && driftBlend < 0.035f) || speed < 3.0f) {
         drifting = false;
@@ -435,7 +441,7 @@ void Car::updateSupport(float dt, const Track& track) {
     const float dx=std::sin(travelYaw)*probe,dz=std::cos(travelYaw)*probe;
     const float ahead=probeHeight(track,x+dx,z+dz,groundHeight,ground.s);
     const float behind=probeHeight(track,x-dx,z-dz,groundHeight,ground.s);
-    const float supportVelocity=(ahead-behind)/(2*probe)*speed;
+    const float supportVelocity=(ahead-behind)/(2*probe)*speed*moveScale;
     const float contactVelocity=std::fmin(supportVelocity,maxLaunchSpeed);
     const float freeY=oldY+verticalSpeed*dt-.5f*gravity*dt*dt;
     const float freeVelocity=verticalSpeed-gravity*dt;
@@ -502,7 +508,7 @@ void Car::updateAirborne(float dt, const DriveInput& input, const Track& track) 
     }
     itemKickTime=-1;itemKickBonus=0; // In flight the push simply stays as momentum.
     const float steer=clampf(input.steer,-1,1);
-    const float targetTurn=steer*driftSteerRate*airSteerControl*(speed>=0?1.0f:-1.0f);
+    const float targetTurn=steer*driftSteerRate*turnScale*airSteerControl*(speed>=0?1.0f:-1.0f);
     airTurnRate_+=(targetTurn-airTurnRate_)*(1-std::exp(-8*dt));
     const float turn=airTurnRate_*dt;
     yaw=wrapPi(yaw+turn);
@@ -520,9 +526,9 @@ void Car::updateAirborne(float dt, const DriveInput& input, const Track& track) 
     // from a flying car. The excess joins the normal cap gradually on landing.
     boostSpeedBonus=boostLevel>0&&boostLevel<=3?
         std::fmin(kBoostPeaks[boostLevel]*boostSpeedScale*boostEnvelopeAmount(),std::fmax(speed,0.0f)):0;
-    x+=std::sin(travelYaw)*speed*dt;
-    z+=std::cos(travelYaw)*speed*dt;
-    wheelSpin+=speed/kWheelRadius*dt;
+    x+=std::sin(travelYaw)*speed*moveScale*dt;
+    z+=std::cos(travelYaw)*speed*moveScale*dt;
+    wheelSpin+=speed*moveScale/kWheelRadius*dt;
     updateSupport(dt,track);
     if (impact>.05f || (grounded&&(!onAsphalt || input.brake>.05f))) cancelAirReward();
     if (grounded)
@@ -600,9 +606,16 @@ void Car::applyTuning(const FeelSettings& rawSettings) {
     boostSpeedHold = settings.boostSpeedHold;
     boostSpeedReturn = settings.boostSpeedReturn;
     itemKickPeak = settings.itemKickKmh / 3.6f;
+    itemChargeSeconds = settings.itemChargeSeconds;
+    moveScale = settings.moveSpeedScale;
+    turnScale = settings.turnRateScale;
 }
 
 void Car::addKick() {
+    if (driftHeld && driftHoldActive && itemChargeSeconds > 0) {
+        driftCharge = std::fmin(driftCharge + itemChargeSeconds, kChargeThresholds[3]);
+        driftChargeLevel = chargeLevelOf(driftCharge);
+    }
     if (speed < 0 || !(itemKickPeak > 0)) return;
     itemKickTime = 0;
 }
@@ -630,6 +643,9 @@ void Car::update(float dt, const DriveInput& input, const Track& track) {
     boostSpeedScale = finiteFeelValue(boostSpeedScale, 1, 0, 2);
     boostDurationScale = finiteFeelValue(boostDurationScale, 1, 0.25f, 3);
     chargeRateScale = finiteFeelValue(chargeRateScale, 1, 0.25f, 3);
+    itemChargeSeconds = finiteFeelValue(itemChargeSeconds, .3f, 0, 1);
+    moveScale = finiteFeelValue(moveScale, 1, .5f, 2);
+    turnScale = finiteFeelValue(turnScale, 1, .5f, 2);
     driftSteerRate = finiteFeelValue(driftSteerRate, 1.8f, 0.3f, 3);
     driftSteerResponse = finiteFeelValue(driftSteerResponse, .12f, .05f, .5f);
     topSpeedKmh = finiteFeelValue(topSpeedKmh, 200, 60, 200);
@@ -841,7 +857,7 @@ void Car::update(float dt, const DriveInput& input, const Track& track) {
             speed += itemKickBonus;
         }
     }
-    wheelSpin += speed / kWheelRadius * dt;
+    wheelSpin += speed * moveScale / kWheelRadius * dt;
 
     stepDrift(dt, input);
 
@@ -875,9 +891,7 @@ void Car::update(float dt, const DriveInput& input, const Track& track) {
         ++boostSerial;
     } else if (driftHeld && driftHoldActive && std::fabs(slipAngle) >= kMinChargeAngle) {
         driftCharge = std::fmin(driftCharge + dt * chargeRateScale, kChargeThresholds[3]);
-        driftChargeLevel = driftCharge + 0.00001f >= kChargeThresholds[3] ? 3 :
-                           (driftCharge + 0.00001f >= kChargeThresholds[2] ? 2 :
-                            (driftCharge + 0.00001f >= kChargeThresholds[1] ? 1 : 0));
+        driftChargeLevel = chargeLevelOf(driftCharge);
     }
     driftIntensity = slipFeedback(speed, slipAngle, onAsphalt);
 }

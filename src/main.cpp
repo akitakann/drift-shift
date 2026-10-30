@@ -96,6 +96,31 @@ const RuntimeTuningField kRuntimeTuningFields[] = {
     {"maxLaunchSpeed", &FeelSettings::maxLaunchSpeed},
     {"airSteerControl", &FeelSettings::airSteerControl},
     {"itemKickKmh", &FeelSettings::itemKickKmh},
+    {"itemChargeSeconds", &FeelSettings::itemChargeSeconds},
+    {"moveSpeedScale", &FeelSettings::moveSpeedScale},
+    {"turnRateScale", &FeelSettings::turnRateScale},
+    {"chargeSemis1", &FeelSettings::chargeSemis1},
+    {"chargeSemis2", &FeelSettings::chargeSemis2},
+    {"chargeSemis3", &FeelSettings::chargeSemis3},
+    {"chargeDb1", &FeelSettings::chargeDb1},
+    {"chargeDb2", &FeelSettings::chargeDb2},
+    {"chargeDb3", &FeelSettings::chargeDb3},
+    {"chargeBlipSemis", &FeelSettings::chargeBlipSemis},
+    {"chargeBlipDb", &FeelSettings::chargeBlipDb},
+    {"chargeBlipTime", &FeelSettings::chargeBlipTime},
+    {"chargeCreepSemis", &FeelSettings::chargeCreepSemis},
+    {"boostSemis1", &FeelSettings::boostSemis1},
+    {"boostSemis2", &FeelSettings::boostSemis2},
+    {"boostSemis3", &FeelSettings::boostSemis3},
+    {"boostDb", &FeelSettings::boostDb},
+    {"boostTime", &FeelSettings::boostTime},
+    {"itemRevSemis", &FeelSettings::itemRevSemis},
+    {"itemRevDb", &FeelSettings::itemRevDb},
+    {"itemRevTime", &FeelSettings::itemRevTime},
+    {"boostWhooshDb", &FeelSettings::boostWhooshDb},
+    {"itemWhooshDb", &FeelSettings::itemWhooshDb},
+    {"itemPickupDb", &FeelSettings::itemPickupDb},
+    {"afterfireDb", &FeelSettings::afterfireDb},
     {"momentFxScale", &FeelSettings::momentFxScale},
     {"engineRevScale", &FeelSettings::engineRevScale},
     {"engineRevReturn", &FeelSettings::engineRevReturn},
@@ -401,11 +426,15 @@ void loadBest(App& app) {
                 const raw=localStorage.getItem('drift-shift.best');
                 if(!raw) return 0;
                 const best=JSON.parse(raw);
-                if(!best||best.scale!==$0||!Array.isArray(best.sectors)||best.sectors.length!==$1) return 0;
+                // Records belong to one course scale and one movement speed;
+                // records saved before the speed was stored were set at 1.
+                const speed=typeof best.speed==='number'?best.speed:1;
+                if(!best||Math.abs(best.scale-$0)>1e-4||Math.abs(speed-$3)>1e-4||
+                   !Array.isArray(best.sectors)||best.sectors.length!==$1) return 0;
                 const value=$2<0?best.lap:best.sectors[$2];
                 return typeof value==='number'&&isFinite(value)&&value>0?value:0;
             } catch(e) { return 0; }
-        },double(app.stageScale),count,index));
+        },double(app.stageScale),count,index,double(app.car.moveScale)));
     };
     attack.bestLap=read(-1);
     for(int i=0;i<count;++i) attack.bestSectors[std::size_t(i)]=read(i);
@@ -415,7 +444,7 @@ void loadBest(App& app) {
 void saveBest(App& app) {
 #ifdef __EMSCRIPTEN__
     std::ostringstream out; out<<std::setprecision(9);
-    out<<"{\"scale\":"<<app.stageScale<<",\"lap\":"<<app.attack.bestLap<<",\"sectors\":[";
+    out<<"{\"scale\":"<<app.stageScale<<",\"speed\":"<<app.car.moveScale<<",\"lap\":"<<app.attack.bestLap<<",\"sectors\":[";
     for(std::size_t i=0;i<app.attack.bestSectors.size();++i) out<<(i?",":"")<<app.attack.bestSectors[i];
     out<<"]}";
     const std::string text=out.str();
@@ -476,6 +505,8 @@ bool applyLiveTuning(App& app) {
         app.settings.suspensionTravel=app.recordingSettings.suspensionTravel;
         app.settings.maxLaunchSpeed=app.recordingSettings.maxLaunchSpeed;
         app.settings.airSteerControl=app.recordingSettings.airSteerControl;
+        app.settings.moveSpeedScale=app.recordingSettings.moveSpeedScale;
+        app.settings.turnRateScale=app.recordingSettings.turnRateScale;
     }
     bool changed=false;
     for(const auto& field:kRuntimeTuningFields)
@@ -484,6 +515,8 @@ bool applyLiveTuning(App& app) {
         const float previousSpeed=app.car.speed;
         app.car.applyTuning(app.settings);
         applyStageScale(app,true);
+        // Records belong to one movement speed as well as one course scale.
+        if(std::fabs(app.settings.moveSpeedScale-previous.moveSpeedScale)>0.000001f) loadBest(app);
         if(app.car.speed!=previousSpeed) app.vehicle.rebaseVelocity(app.car);
         app.camera.applySettings(app.car,previous,app.settings);
         if(app.started&&app.frameNumber>0) {
@@ -517,6 +550,8 @@ void resetTrial(App& app,bool replay=false) {
         app.settings.suspensionTravel=app.recordingSettings.suspensionTravel;
         app.settings.maxLaunchSpeed=app.recordingSettings.maxLaunchSpeed;
         app.settings.airSteerControl=app.recordingSettings.airSteerControl;
+        app.settings.moveSpeedScale=app.recordingSettings.moveSpeedScale;
+        app.settings.turnRateScale=app.recordingSettings.turnRateScale;
     }
     applyStageScale(app,false);
     app.car.reset(app.track);
@@ -914,6 +949,18 @@ std::string signedSeconds(float seconds) {
     return text;
 }
 
+DriftAudio::RevTuning revTuningOf(const FeelSettings& s) {
+    DriftAudio::RevTuning t;
+    t.chargeSemis[0]=s.chargeSemis1;t.chargeSemis[1]=s.chargeSemis2;t.chargeSemis[2]=s.chargeSemis3;
+    t.chargeDb[0]=s.chargeDb1;t.chargeDb[1]=s.chargeDb2;t.chargeDb[2]=s.chargeDb3;
+    t.blipSemis=s.chargeBlipSemis;t.blipDb=s.chargeBlipDb;t.blipTime=s.chargeBlipTime;t.creepSemis=s.chargeCreepSemis;
+    t.boostSemis[0]=s.boostSemis1;t.boostSemis[1]=s.boostSemis2;t.boostSemis[2]=s.boostSemis3;
+    t.boostDb=s.boostDb;t.boostTime=s.boostTime;
+    t.itemSemis=s.itemRevSemis;t.itemDb=s.itemRevDb;t.itemTime=s.itemRevTime;
+    t.boostWhooshDb=s.boostWhooshDb;t.itemWhooshDb=s.itemWhooshDb;t.pickupDb=s.itemPickupDb;t.afterfireDb=s.afterfireDb;
+    return t;
+}
+
 void onPickup(App& app,const DashItems::Pickup& pickup) {
     app.moments.item(pickup.chain);
     app.audio.cue(DriftAudio::Cue::Item,pickup.chain);
@@ -1276,6 +1323,7 @@ void frame(void* userdata) {
     app.audio.setLayerGains(app.settings.engineGain,app.settings.tireGain);
     app.audio.setWindGain(app.settings.windGain);
     app.audio.setRevProfile(app.settings.engineRevScale,app.settings.engineRevReturn);
+    app.audio.setRevTuning(revTuningOf(app.settings));
     if(app.ended) app.finishedAge+=float(elapsed);
     bool audioPaused=app.paused||!app.started||(app.ended&&app.finishedAge>0.5f);
     app.audio.update(app.ended?0:app.car.speed,app.ended?0:std::max(app.car.throttleLevel,app.revThrottle),

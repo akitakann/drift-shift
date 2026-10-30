@@ -67,8 +67,36 @@ struct FeelSettings {
     float suspensionTravel = 0.20f;
     float maxLaunchSpeed = 4.5f;
     float airSteerControl = 0.35f;
-    float itemKickKmh = 30;   // Peak push of one dash item, km/h.
+    float itemKickKmh = 18;   // Peak push of one dash item, km/h.
+    float itemChargeSeconds = 0.3f; // Charge one dash item adds while a drift is held, s.
+    float moveSpeedScale = 1; // World distance per unit of speed: faster travel at the same speed readout.
+    float turnRateScale = 1;  // How quickly the same steering turns the car, grip and drift alike.
     float momentFxScale = 1;  // Strength of the screen accents at GO, items, sector bests, laps and records.
+    // How the engine itself answers charge, boost and item pushes (src/audio.cpp,
+    // tuned on the "チャージ音の調整" page). Pitches are semitones on the engine
+    // note, levels dB; a file level of -30 silences that file.
+    float chargeSemis1 = 1.5f;
+    float chargeSemis2 = 3;
+    float chargeSemis3 = 5;
+    float chargeDb1 = 1;
+    float chargeDb2 = 2;
+    float chargeDb3 = 3.5f;
+    float chargeBlipSemis = 2.5f;
+    float chargeBlipDb = 3;
+    float chargeBlipTime = 0.25f;
+    float chargeCreepSemis = 0.8f;
+    float boostSemis1 = 5;
+    float boostSemis2 = 6.5f;
+    float boostSemis3 = 8;
+    float boostDb = 4;
+    float boostTime = 1;
+    float itemRevSemis = 2;
+    float itemRevDb = 2.5f;
+    float itemRevTime = 0.3f;
+    float boostWhooshDb = 0;
+    float itemWhooshDb = 0;
+    float itemPickupDb = 0;
+    float afterfireDb = -6;
     float engineRevScale = 1;
     float engineRevReturn = 0.65f;
 };
@@ -142,6 +170,31 @@ inline FeelSettings sanitizeFeelSettings(FeelSettings settings) {
     FEEL_BOUND(maxLaunchSpeed, 2, 8);
     FEEL_BOUND(airSteerControl, 0, 0.8f);
     FEEL_BOUND(itemKickKmh, 0, 60);
+    FEEL_BOUND(itemChargeSeconds, 0, 1);
+    FEEL_BOUND(moveSpeedScale, 0.5f, 2);
+    FEEL_BOUND(turnRateScale, 0.5f, 2);
+    FEEL_BOUND(chargeSemis1, -12, 12);
+    FEEL_BOUND(chargeSemis2, -12, 12);
+    FEEL_BOUND(chargeSemis3, -12, 12);
+    FEEL_BOUND(chargeDb1, -12, 12);
+    FEEL_BOUND(chargeDb2, -12, 12);
+    FEEL_BOUND(chargeDb3, -12, 12);
+    FEEL_BOUND(chargeBlipSemis, 0, 12);
+    FEEL_BOUND(chargeBlipDb, 0, 12);
+    FEEL_BOUND(chargeBlipTime, 0.05f, 1);
+    FEEL_BOUND(chargeCreepSemis, 0, 6);
+    FEEL_BOUND(boostSemis1, 0, 12);
+    FEEL_BOUND(boostSemis2, 0, 12);
+    FEEL_BOUND(boostSemis3, 0, 12);
+    FEEL_BOUND(boostDb, -12, 12);
+    FEEL_BOUND(boostTime, 0.4f, 2.5f);
+    FEEL_BOUND(itemRevSemis, 0, 12);
+    FEEL_BOUND(itemRevDb, -12, 12);
+    FEEL_BOUND(itemRevTime, 0.05f, 1);
+    FEEL_BOUND(boostWhooshDb, -30, 12);
+    FEEL_BOUND(itemWhooshDb, -30, 12);
+    FEEL_BOUND(itemPickupDb, -30, 12);
+    FEEL_BOUND(afterfireDb, -30, 12);
     FEEL_BOUND(momentFxScale, 0, 2);
     FEEL_BOUND(engineRevScale, 0, 2);
     FEEL_BOUND(engineRevReturn, 0.20f, 1.5f);
